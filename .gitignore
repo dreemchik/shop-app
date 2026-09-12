@@ -1,0 +1,5 @@
+node_modules/
+shop.db
+uploads/
+*.log
+.env

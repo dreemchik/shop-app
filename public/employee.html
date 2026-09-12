@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Сотрудник</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: Arial; margin: 0; padding: 15px; background: #f0f0f0; }
+        h1 { font-size: 20px; margin: 0 0 10px 0; }
+        h3 { font-size: 16px; margin: 15px 0 8px 0; }
+
+        .logout { float: right; background: #6c757d; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; }
+
+        .shift-info { background: #fff3cd; padding: 10px; border-radius: 8px; margin-bottom: 15px; font-size: 14px; }
+
+        .search-box { width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; margin-bottom: 10px; }
+
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 10px;
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 5px;
+            background: white;
+            border-radius: 8px;
+        }
+
+        .product-card {
+            background: #fafafa;
+            border: 2px solid #eee;
+            border-radius: 8px;
+            padding: 8px;
+            cursor: pointer;
+            transition: 0.2s;
+            text-align: center;
+        }
+        .product-card:hover { border-color: #28a745; }
+        .product-card.selected { border-color: #28a745; background: #e8f5e9; }
+        .product-card .desc { font-size: 11px; color: #777; margin: 2px 0; max-height: 30px; overflow: hidden; }
+
+        .product-card img {
+            width: 100%;
+            height: 90px;
+            object-fit: cover;
+            border-radius: 6px;
+            margin-bottom: 6px;
+        }
+        .no-photo {
+            width: 100%;
+            height: 90px;
+            background: #eee;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #999;
+            font-size: 12px;
+        }
+
+        .product-card .art { font-size: 11px; color: #888; }
+        .product-card .name { font-size: 13px; font-weight: bold; margin: 3px 0; }
+        .product-card .price { font-size: 14px; color: #28a745; font-weight: bold; }
+        .product-card .stock { font-size: 11px; color: #666; }
+
+        .sale-form { background: white; padding: 15px; border-radius: 8px; margin-top: 15px; }
+        .sale-form input { padding: 10px; margin: 4px 0; width: 100%; font-size: 16px; border: 1px solid #ccc; border-radius: 6px; }
+        .sale-form button { width: 100%; padding: 12px; background: #28a745; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 8px; }
+        .sale-form button:hover { background: #1e7e34; }
+        .selected-info { font-size: 14px; color: #555; margin: 8px 0; }
+
+        .total { font-size: 20px; font-weight: bold; margin: 15px 0 10px 0; }
+
+        table { width: 100%; border-collapse: collapse; background: white; margin-top: 10px; font-size: 14px; }
+        th, td { padding: 8px; border: 1px solid #ddd; text-align: left; }
+        th { background: #28a745; color: white; }
+
+        .close-btn { background: #dc3545; color: white; border: none; padding: 12px; border-radius: 6px; font-size: 16px; cursor: pointer; width: 100%; margin-top: 15px; }
+        .close-btn:hover { background: #a71d2a; }
+
+        .cancel-btn { background: #ff9800; color: white; border: none; padding: 10px; border-radius: 6px; font-size: 14px; cursor: pointer; width: 100%; margin-top: 10px; }
+        .cancel-btn:hover { background: #e68900; }
+
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <button class="logout" onclick="logout()">Выйти</button>
+    <h1>Рабочее место продавца</h1>
+
+    <div id="shiftStartBlock">
+        <div class="sale-form">
+            <h3>Смена не открыта</h3>
+            <p>Нажмите кнопку, чтобы начать смену.</p>
+            <button onclick="startShift()">Начать смену</button>
+        </div>
+    </div>
+
+    <div id="shiftWorkBlock" class="hidden">
+        <div class="shift-info">
+            <strong>Смена открыта.</strong> Начало: <span id="shiftStartTime"></span>
+        </div>
+
+        <h3>Выберите товар</h3>
+        <input type="text" class="search-box" id="search" placeholder="Поиск по названию или артикулу..." oninput="renderProducts()">
+        <div class="products-grid" id="productsGrid"></div>
+
+        <div class="sale-form">
+            <div class="selected-info" id="selectedInfo">Товар не выбран</div>
+
+            <label style="display:block; margin-top:10px; font-size:14px; color:#555;">Количество:</label>
+            <input type="number" id="quantity" placeholder="Например: 1" value="1" min="1">
+
+            <label style="display:block; margin-top:10px; font-size:14px; color:#555;">Скидка, % (0 — без скидки):</label>
+            <input type="number" id="discount" placeholder="Например: 0" value="0" min="0" max="100">
+
+            <button onclick="addSale()">Продать</button>
+        </div>
+
+        <div class="total">Выручка за смену: <span id="totalSum">0</span> ₽</div>
+
+        <h3>Продажи за смену</h3>
+        <table id="salesTable">
+            <thead>
+                <tr>
+                    <th>Артикул</th>
+                    <th>Название</th>
+                    <th>Кол-во</th>
+                    <th>Скидка</th>
+                    <th>Сумма</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+
+        <button class="cancel-btn" onclick="cancelLastSale()">Отменить последнюю продажу</button>
+        <button class="close-btn" onclick="closeShift()">Закрыть смену</button>
+    </div>
+
+    <script>
+        const sellerName = 'seller';
+        let currentShiftId = null;
+        let allProducts = [];
+        let selectedProductId = null;
+        let lastSaleId = null;
+
+        async function checkShift() {
+            const res = await fetch('/api/shifts/current/' + sellerName);
+            const shift = await res.json();
+
+            if (shift) {
+                currentShiftId = shift.id;
+                document.getElementById('shiftStartBlock').classList.add('hidden');
+                document.getElementById('shiftWorkBlock').classList.remove('hidden');
+                document.getElementById('shiftStartTime').textContent = new Date(shift.start_time).toLocaleString('ru-RU');
+                loadProducts();
+                loadSales();
+            } else {
+                document.getElementById('shiftStartBlock').classList.remove('hidden');
+                document.getElementById('shiftWorkBlock').classList.add('hidden');
+            }
+        }
+
+        async function startShift() {
+            const res = await fetch('/api/shifts/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ seller: sellerName })
+            });
+            const data = await res.json();
+            if (!data.success) { alert(data.error); return; }
+            checkShift();
+        }
+
+        async function closeShift() {
+            if (!confirm('Закрыть смену? После этого менять продажи будет нельзя.')) return;
+            const res = await fetch('/api/shifts/close', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ shift_id: currentShiftId })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert('Смена закрыта. Выручка: ' + data.total.toFixed(2) + ' ₽');
+                currentShiftId = null;
+                checkShift();
+            }
+        }
+
+        async function loadProducts() {
+            const res = await fetch('/api/products');
+            allProducts = await res.json();
+            renderProducts();
+        }
+
+        function renderProducts() {
+            const query = document.getElementById('search').value.toLowerCase().trim();
+            const grid = document.getElementById('productsGrid');
+            grid.innerHTML = '';
+
+            const filtered = allProducts.filter(p => {
+                if (p.stock <= 0) return false;
+                if (!query) return true;
+                return p.name.toLowerCase().includes(query) || p.article.toLowerCase().includes(query);
+            });
+
+            if (filtered.length === 0) {
+                grid.innerHTML = '<p style="padding:10px;color:#888;">Ничего не найдено</p>';
+                return;
+            }
+
+            filtered.forEach(p => {
+                const photoHtml = p.photo
+                    ? `<img src="${p.photo}" alt="${p.name}">`
+                    : `<div class="no-photo">нет фото</div>`;
+
+                const card = document.createElement('div');
+                card.className = 'product-card' + (selectedProductId === p.id ? ' selected' : '');
+                card.innerHTML = `
+                    ${photoHtml}
+                    <div class="art">${p.article}</div>
+                    <div class="name">${p.name}</div>
+                    ${p.description ? `<div class="desc">${p.description}</div>` : ''}
+                    <div class="price">${p.price} ₽</div>
+                    <div class="stock">Остаток: ${p.stock}</div>
+                `;
+                card.onclick = () => selectProduct(p.id);
+                grid.appendChild(card);
+            });
+        }
+
+        function selectProduct(id) {
+            selectedProductId = id;
+            const p = allProducts.find(x => x.id === id);
+            document.getElementById('selectedInfo').innerHTML =
+                `Выбран: <strong>${p.article} — ${p.name}</strong> (${p.price} ₽, остаток: ${p.stock})` +
+                (p.description ? `<br><span style="font-size:13px;color:#777;">${p.description}</span>` : '');
+            renderProducts();
+        }
+
+        async function loadSales() {
+            if (!currentShiftId) return;
+            const res = await fetch('/api/sales/shift/' + currentShiftId);
+            const sales = await res.json();
+            const tbody = document.querySelector('#salesTable tbody');
+            tbody.innerHTML = '';
+            let total = 0;
+            sales.forEach(s => {
+                total += s.total;
+                tbody.innerHTML += `
+                    <tr>
+                        <td>${s.article}</td>
+                        <td>${s.name}</td>
+                        <td>${s.quantity}</td>
+                        <td>${s.discount}%</td>
+                        <td>${s.total.toFixed(2)} ₽</td>
+                    </tr>
+                `;
+            });
+            document.getElementById('totalSum').textContent = total.toFixed(2);
+            lastSaleId = sales.length > 0 ? sales[0].id : null;
+        }
+
+        async function addSale() {
+            if (!currentShiftId) { alert('Смена не открыта'); return; }
+            if (!selectedProductId) { alert('Выберите товар'); return; }
+
+            const quantity = document.getElementById('quantity').value;
+            const discount = document.getElementById('discount').value;
+
+            const res = await fetch('/api/sales', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    product_id: selectedProductId,
+                    quantity, discount,
+                    seller: sellerName,
+                    shift_id: currentShiftId
+                })
+            });
+            const data = await res.json();
+            if (data.error) { alert(data.error); return; }
+
+            selectedProductId = null;
+            document.getElementById('selectedInfo').textContent = 'Товар не выбран';
+            document.getElementById('quantity').value = 1;
+            document.getElementById('discount').value = 0;
+            document.getElementById('search').value = '';
+            loadProducts();
+            loadSales();
+        }
+
+        async function cancelLastSale() {
+            if (!lastSaleId) { alert('Нет продаж для отмены'); return; }
+            if (!confirm('Отменить последнюю продажу?')) return;
+
+            const res = await fetch('/api/sales/' + lastSaleId, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.error) { alert(data.error); return; }
+
+            loadProducts();
+            loadSales();
+        }
+
+        function logout() { window.location.href = '/'; }
+
+        checkShift();
+    </script>
+</body>
+</html>

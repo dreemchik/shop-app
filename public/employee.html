@@ -844,22 +844,66 @@
             border-left: 4px solid transparent; color: rgba(255,255,255,0.85);
         }
         .theme-switch:hover { background: rgba(255,255,255,0.1); color: #fff; padding-left: 25px; }
+
+        /* === УВЕДОМЛЕНИЯ === */
+        .emp-notif-badge {
+            background: #ffc107; color: #5a4500; border-radius: 999px;
+            padding: 2px 8px; font-size: 12px; font-weight: 700; margin-left: 8px;
+            display: none; vertical-align: middle;
+        }
+        .emp-notif-item {
+            background: #fff; border-left: 4px solid #e85d75;
+            border-radius: 12px; padding: 14px 16px; margin-bottom: 10px;
+            box-shadow: 0 2px 8px rgba(232, 93, 117, 0.08);
+        }
+        .emp-notif-item.read { opacity: 0.65; border-left-color: #d9d9d9; }
+        .emp-notif-item.unread { background: #fffbea; border-left-color: #e85d75; }
+        .notif-readall-btn {
+            background: #f0e0e4; color: #666; border: none; border-radius: 10px;
+            padding: 12px 18px; cursor: pointer; font-size: 14px; font-weight: 600;
+            transition: all 0.2s ease;
+        }
+        .notif-readall-btn:hover { background: #e0ccd1; }
+        html[data-theme="dark"] .emp-notif-item { background: #1f232b; }
+        html[data-theme="dark"] .emp-notif-item.unread { background: #2a2615; }
+        html[data-theme="dark"] .notif-readall-btn { background: #2a2f37; color: #c0c5cc; }
+        html[data-theme="dark"] .notif-readall-btn:hover { background: #343b45; }
+
+        /* Тост: новое уведомление */
+        .notif-toast {
+            position: fixed; top: 18px; left: 50%; z-index: 5000;
+            transform: translateX(-50%) translateY(-200%);
+            background: #e85d75; color: #fff; padding: 14px 22px;
+            border-radius: 14px; font-size: 15px; font-weight: 600;
+            box-shadow: 0 8px 30px rgba(232, 93, 117, 0.45);
+            max-width: 92%; text-align: center;
+            transition: transform 0.35s ease; opacity: 0;
+        }
+        .notif-toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+        /* === СОРТИРОВКА ТАБЛИЦ === */
+        th.sortable-th { cursor: pointer; user-select: none; position: relative; transition: background 0.2s ease; }
+        th.sortable-th:hover { background: rgba(232, 93, 117, 0.18); }
+        th.sortable-th .arrow { display: inline-block; margin-left: 5px; font-size: 11px; opacity: 0.35; }
+        th.sortable-th.sorted { background: rgba(232, 93, 117, 0.12); }
+        th.sortable-th.sorted .arrow { opacity: 1; color: #e85d75; }
     </style>
 </head>
 <body>
     <button class="burger" onclick="toggleSidebar()">☰</button>
+    <div class="notif-toast" id="notifToast"></div>
 
     <div class="sidebar" id="sidebar">
         <div class="logo">М</div>
         <h2>Магазин</h2>
         <div class="user-info" id="sidebarUser"></div>
         <div class="menu-item" data-section="profile" onclick="showSection('profile')">👤 Мой профиль</div>
-        <div class="menu-item" data-section="products" onclick="showSection('products')">📦 Товары</div>
         <div class="menu-item" data-section="sales" onclick="showSection('sales')">💰 Дневные продажи</div>
         <div class="menu-item" data-section="tasks" onclick="showSection('tasks')">✅ Задачи</div>
         <div class="menu-item" data-section="reports" onclick="showSection('reports')">📊 Выручка и отчёты</div>
         <div class="menu-item" data-section="finance" onclick="showSection('finance')">💵 Финансы</div>
         <div class="menu-item" data-section="docs" onclick="showSection('docs')">📄 Документы</div>
+        <div class="menu-item" data-section="notifications" onclick="showSection('notifications')">🔔 Уведомления <span id="empNotifBadge" class="emp-notif-badge" style="display:none;">0</span></div>
         <div class="theme-switch" id="themeSwitch" onclick="toggleTheme()">🌙 Тёмная тема</div>
     </div>
 
@@ -874,23 +918,6 @@
                 <p><strong>Логин:</strong> <span id="profileUsername"></span></p>
                 <p><strong>Роль:</strong> <span>Сотрудник</span></p>
                 <p><strong>Торговый центр:</strong> <span id="profileTc"></span></p>
-            </div>
-        </div>
-
-        <!-- ТОВАРЫ -->
-        <div id="productsSection" class="hidden">
-            <button class="logout" onclick="logout()">Выйти</button>
-            <h1>Товары</h1>
-
-            <div id="productsCategoriesView">
-                <div class="categories-grid" id="productsCategoriesGrid"></div>
-            </div>
-
-            <div id="productsListView" class="hidden">
-                <button class="back-btn" onclick="backToCategories('products')">← Все категории</button>
-                <h3 id="productsCategoryTitle"></h3>
-                <input type="text" class="search-box" id="searchProducts" placeholder="Поиск по названию или артикулу..." oninput="renderCategoryProducts('products')">
-                <div class="products-grid" id="productsGrid"></div>
             </div>
         </div>
 
@@ -1101,6 +1128,17 @@
             <h3>Мои документы</h3>
             <div id="docsList"></div>
         </div>
+
+        <!-- УВЕДОМЛЕНИЯ -->
+        <div id="notificationsSection" class="hidden">
+            <button class="logout" onclick="logout()">Выйти</button>
+            <h1>🔔 Уведомления</h1>
+            <p style="font-size:14px;color:#888;margin-bottom:15px;">Здесь появляются уведомления о новых товарах и событиях.</p>
+            <div style="margin-bottom:15px;">
+                <button class="notif-readall-btn" onclick="readAllEmployeeNotifications()">✅ Отметить все прочитанными</button>
+            </div>
+            <div id="employeeNotifList"></div>
+        </div>
     </div>
 
     <!-- МОДАЛЬНОЕ ОКНО: ПРОДАЖА -->
@@ -1256,7 +1294,7 @@
         let myCurrentShift = null;
 
         // === НАВИГАЦИЯ ===
-        const sectionNames = ['profile', 'products', 'sales', 'tasks', 'reports', 'finance', 'docs'];
+        const sectionNames = ['profile', 'sales', 'tasks', 'reports', 'finance', 'docs', 'notifications'];
 
         function showSection(section, event, fromHistory) {
             if (!sectionNames.includes(section)) section = 'profile';
@@ -1274,12 +1312,12 @@
             void sectionEl.offsetWidth;
             sectionEl.classList.add('section-fade');
 
-            if (section === 'products') loadCategoriesFor('products');
             if (section === 'sales') { checkShift(); }
             if (section === 'reports') { loadReports(); loadShifts(); }
             if (section === 'finance') loadFinance();
             if (section === 'tasks') loadTasks();
             if (section === 'docs') loadDocuments();
+            if (section === 'notifications') loadEmployeeNotifications();
             if (window.innerWidth <= 768 && document.getElementById('sidebar').classList.contains('open')) toggleSidebar();
 
             localStorage.setItem('currentSection', section);
@@ -1983,6 +2021,161 @@ function logout() { localStorage.clear(); window.location.href = '/'; }
             if (meta) meta.setAttribute('content', dark ? '#15171c' : '#e85d75');
         }
 
+        // === УВЕДОМЛЕНИЯ ===
+        let lastEmpUnread = null;
+        const empSeenIds = new Set();
+
+        async function loadEmployeeNotifications() {
+            try {
+                const res = await fetch('/api/notifications?user_id=' + encodeURIComponent(userId));
+                const notifs = await res.json();
+                const list = document.getElementById('employeeNotifList');
+                if (!Array.isArray(notifs) || notifs.length === 0) {
+                    list.innerHTML = '<div class="empty-note">Уведомлений пока нет.</div>';
+                    return;
+                }
+                list.innerHTML = notifs.map(n => {
+                    const date = new Date(n.created_at).toLocaleString('ru-RU');
+                    return `<div class="emp-notif-item ${n.is_read ? 'read' : 'unread'}">
+                        <div style="font-size:15px;">${n.message}</div>
+                        <div style="font-size:12px;color:#8a9099;margin-top:6px;">${date}</div>
+                    </div>`;
+                }).join('');
+            } catch (e) {}
+        }
+
+        async function pollEmployeeNotifications(showToast) {
+            try {
+                const res = await fetch('/api/notifications?user_id=' + encodeURIComponent(userId));
+                const notifs = await res.json();
+                if (!Array.isArray(notifs)) return;
+                const unread = notifs.filter(n => !n.is_read).length;
+                const badge = document.getElementById('empNotifBadge');
+                badge.textContent = unread || 0;
+                badge.style.display = unread > 0 ? 'inline-block' : 'none';
+
+                const fresh = notifs.filter(n => !empSeenIds.has(n.id));
+                fresh.forEach(n => empSeenIds.add(n.id));
+
+                if (showToast && fresh.length > 0 && lastEmpUnread !== null && unread > lastEmpUnread) {
+                    showNotifToast(fresh.slice(0, 2).map(n => n.message).join('<br>'));
+                }
+                lastEmpUnread = unread;
+            } catch (e) {}
+        }
+
+        function showNotifToast(html) {
+            const t = document.getElementById('notifToast');
+            t.innerHTML = '🔔 ' + html;
+            t.classList.add('show');
+            clearTimeout(showNotifToast._t);
+            showNotifToast._t = setTimeout(() => t.classList.remove('show'), 6000);
+        }
+
+        async function readAllEmployeeNotifications() {
+            await fetch('/api/notifications/read-all?user_id=' + encodeURIComponent(userId), { method: 'POST' });
+            lastEmpUnread = 0;
+            loadEmployeeNotifications();
+            pollEmployeeNotifications(false);
+        }
+
+        // === СОРТИРОВКА ТАБЛИЦ (клик по заголовку) ===
+        const sortState = {};
+        const sortNoSortCols = new Set(['Фото', 'Действия', '']);
+
+        function sortNumeric(raw) {
+            const n = parseFloat(String(raw).replace(/[^0-9.,-]/g, '').replace(',', '.'));
+            return isNaN(n) ? null : n;
+        }
+
+        function sortKey(row, col) {
+            const td = row.querySelectorAll('td')[col];
+            if (!td) return { n: null, s: '' };
+            // data-sort (например, ISO-даты) всегда сравниваем как строки
+            if (td.dataset.sort !== undefined) return { n: null, s: String(td.dataset.sort).toLowerCase() };
+            const raw = (td.innerText || '').trim();
+            const n = sortNumeric(raw);
+            const hasDigit = /[0-9]/.test(raw);
+            return { n: hasDigit && n !== null ? n : null, s: raw.toLowerCase() };
+        }
+
+        function sortCompare(a, b) {
+            if (a.n !== null && b.n !== null) return a.n - b.n;
+            return a.s < b.s ? -1 : a.s > b.s ? 1 : 0;
+        }
+
+        function applySort(tableId, col, dir) {
+            const table = document.getElementById(tableId);
+            if (!table) return;
+            const tbody = table.querySelector('tbody');
+            if (!tbody) return;
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            const groups = [];
+            let current = null;
+            for (const r of rows) {
+                if (r.classList.contains('shift-details')) {
+                    if (current) current.pair = r;
+                    continue;
+                }
+                current = { row: r, pair: null };
+                groups.push(current);
+            }
+            if (groups.length === 0) return;
+            const mul = dir === 'asc' ? 1 : -1;
+            const sorted = groups.slice().sort((x, y) => mul * sortCompare(sortKey(x.row, col), sortKey(y.row, col)));
+            const changed = groups.some((g, i) => g !== sorted[i]);
+            if (!changed) return;
+            const frag = document.createDocumentFragment();
+            sorted.forEach(g => {
+                frag.appendChild(g.row);
+                if (g.pair) frag.appendChild(g.pair);
+            });
+            tbody.appendChild(frag);
+        }
+
+        function renderSortIndicators(table, col, dir) {
+            table.querySelectorAll('thead th').forEach((th, i) => {
+                const arrow = th.querySelector('.arrow');
+                if (!arrow) return;
+                th.classList.toggle('sorted', i === col);
+                arrow.textContent = i === col ? (dir === 'asc' ? '▲' : '▼') : '↕';
+            });
+        }
+
+        function initSortableTables() {
+            document.querySelectorAll('table[id]').forEach(table => {
+                const tbody = table.querySelector('tbody');
+                if (!tbody) return;
+                const ths = Array.from(table.querySelectorAll('thead th'));
+                ths.forEach((th, i) => {
+                    const label = (th.innerText || '').trim();
+                    if (sortNoSortCols.has(label)) return;
+                    th.classList.add('sortable-th');
+                    th.innerHTML = th.innerHTML.trim() + ' <span class="arrow">↕</span>';
+                    th.onclick = () => {
+                        const st = sortState[table.id] || { col: -1, dir: 'asc' };
+                        let dir;
+                        if (st.col === i) dir = st.dir === 'asc' ? 'desc' : 'asc';
+                        else dir = 'asc';
+                        sortState[table.id] = { col: i, dir };
+                        renderSortIndicators(table, i, dir);
+                        applySort(table.id, i, dir);
+                    };
+                });
+                let timer = null;
+                new MutationObserver(() => {
+                    clearTimeout(timer);
+                    timer = setTimeout(() => {
+                        const st = sortState[table.id];
+                        if (st && st.col >= 0) applySort(table.id, st.col, st.dir);
+                    }, 30);
+                }).observe(tbody, { childList: true, subtree: true });
+            });
+        }
+
+        initSortableTables();
+        pollEmployeeNotifications(false);
+        setInterval(() => pollEmployeeNotifications(true), 30000);
         initSection();
     </script>
 </body>

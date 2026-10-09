@@ -273,6 +273,29 @@
         .stock-row input { width: 80px; margin: 0; padding: 8px; font-size: 14px; }
         .stock-row label { font-size: 12px; color: #888; margin: 0 4px 0 0; }
 
+        /* === СОРТИРОВКА ТАБЛИЦ === */
+        th.sortable-th { cursor: pointer; user-select: none; position: relative; transition: background 0.2s ease; }
+        th.sortable-th:hover { background: rgba(232, 93, 117, 0.18); }
+        th.sortable-th .arrow { display: inline-block; margin-left: 5px; font-size: 11px; opacity: 0.35; }
+        th.sortable-th.sorted { background: rgba(232, 93, 117, 0.12); }
+        th.sortable-th.sorted .arrow { opacity: 1; color: #e85d75; }
+        .sort-control { display: flex; align-items: center; gap: 10px; margin: 12px 0; flex-wrap: wrap; }
+        .sort-control span { font-size: 14px; color: #888; }
+        .sort-control button { padding: 8px 14px; border-radius: 10px; border: 2px solid #f0e0e4; background: #fff; cursor: pointer; font-size: 14px; color: #2c3e50; font-weight: 500; transition: all 0.2s ease; }
+        .sort-control button:hover { border-color: #e85d75; }
+        .sort-control button.active { border-color: #e85d75; background: #fce4e8; color: #c94a5f; font-weight: 600; }
+        html[data-theme="dark"] .sort-control button { background: #262a31; border-color: #343b45; color: #e6e8ec; }
+        html[data-theme="dark"] .sort-control button.active { border-color: #e85d75; background: #3a2028; color: #e8798f; }
+
+        /* === РЕДАКТОР ТОВАРА: масштаб === */
+        .modal-lg { max-width: 680px; }
+        .stock-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; background: #fff; padding: 12px 14px; border-radius: 12px; margin-bottom: 10px; box-shadow: 0 1px 4px rgba(232, 93, 117, 0.08); }
+        .stock-row .tc-name { grid-column: 1 / -1; font-size: 15px; font-weight: 600; color: #2c3e50; flex: none; width: 100%; min-width: 0; }
+        .stock-row label { margin: 0; font-size: 12px; color: #888; }
+        .stock-row input { width: 100%; margin: 2px 0 0 0; }
+        html[data-theme="dark"] .stock-row { background: #1f232b; }
+        html[data-theme="dark"] .stock-row .tc-name { color: #e6e8ec; }
+
         .doc-card {
             background: white; padding: 20px; border-radius: 16px;
             margin-bottom: 15px; box-shadow: 0 2px 10px rgba(232, 93, 117, 0.08);
@@ -1018,6 +1041,11 @@
             </div>
 
             <div id="categoriesListView">
+                <div class="sort-control">
+                    <span>Категории:</span>
+                    <button id="catSortAsc" class="active" onclick="sortCategories('asc')">↑ А-Я</button>
+                    <button id="catSortDesc" onclick="sortCategories('desc')">↓ Я-А</button>
+                </div>
                 <div class="categories-grid" id="categoriesGrid"></div>
             </div>
 
@@ -1045,6 +1073,11 @@
                 <h3>Добавить ТЦ</h3>
                 <input type="text" id="newTc" placeholder="Название ТЦ">
                 <button onclick="addTc()">Добавить</button>
+            </div>
+            <div class="sort-control">
+                <span>ТЦ:</span>
+                <button id="tcSortAsc" class="active" onclick="sortTcs('asc')">↑ А-Я</button>
+                <button id="tcSortDesc" onclick="sortTcs('desc')">↓ Я-А</button>
             </div>
             <div class="categories-grid" id="tcsGrid"></div>
         </div>
@@ -1345,7 +1378,7 @@
 
     <!-- МОДАЛЬНОЕ ОКНО: ТОВАР -->
     <div class="modal-overlay" id="editModal">
-        <div class="modal">
+        <div class="modal modal-lg">
             <h3>Редактировать товар</h3>
             <input type="hidden" id="editId">
             <label>Артикул:</label><input type="text" id="editArticle">
@@ -1370,7 +1403,7 @@
 
     <!-- МОДАЛЬНОЕ ОКНО: ДОБАВИТЬ ТОВАР В КАТЕГОРИЮ -->
     <div class="modal-overlay" id="addProductModal">
-        <div class="modal">
+        <div class="modal modal-lg">
             <h3>Добавить товар в категорию</h3>
             <input type="hidden" id="addProductCategory">
             <label>Артикул:</label>
@@ -1737,7 +1770,7 @@ const grid = document.getElementById('categoriesGrid');
             loadProducts();
             loadCategories();
             if (selectedCategoryId) loadCategoryProducts();
-            alert('Товар добавлен в категорию');
+            alert('Товар добавлен в категорию. Продавцы получили уведомление.');
         }
 
         // === ТЦ ===
@@ -2105,7 +2138,7 @@ const grid = document.getElementById('categoriesGrid');
                 tbody.innerHTML += `
                     <tr>
                         <td>${t.text}</td><td>${t.assigned_name}</td><td>${t.creator_name}</td>
-                        <td>${statusText}</td><td>${date}</td>
+                        <td>${statusText}</td><td data-sort="${t.created_at}">${date}</td>
                         <td><button class="delete" onclick="deleteTask(${t.id})">Удалить</button></td>
                     </tr>
                 `;
@@ -2669,7 +2702,7 @@ const grid = document.getElementById('categoriesGrid');
                 const end = s.end_time ? new Date(s.end_time).toLocaleString('ru-RU') : '—';
                 const mainRow = document.createElement('tr');
                 mainRow.className = 'shift-row';
-                mainRow.innerHTML = `<td>${s.full_name}</td><td>${start}</td><td>${end}</td><td>${s.total.toFixed(2)} ₽</td>`;
+                mainRow.innerHTML = `<td>${s.full_name}</td><td data-sort="${s.start_time}">${start}</td><td data-sort="${s.end_time || ''}">${end}</td><td>${s.total.toFixed(2)} ₽</td>`;
                 mainRow.onclick = () => toggleShiftDetails(s.id);
                 tbody.appendChild(mainRow);
 
@@ -2726,6 +2759,7 @@ const grid = document.getElementById('categoriesGrid');
             document.getElementById('categorySelect').value = '';
             document.getElementById('photo').value = '';
             loadProducts();
+            alert('Товар добавлен. Продавцы получили уведомление.');
         }
 
         async function deleteProduct(id) {
@@ -2907,8 +2941,131 @@ const grid = document.getElementById('categoriesGrid');
             if (meta) meta.setAttribute('content', dark ? '#15171c' : '#e85d75');
         }
 
+        // === СОРТИРОВКА ТАБЛИЦ (клик по заголовку) ===
+        const sortState = {};
+        const sortNoSortCols = new Set(['Фото', 'Действия', '']);
+
+        function sortNumeric(raw) {
+            const n = parseFloat(String(raw).replace(/[^0-9.,-]/g, '').replace(',', '.'));
+            return isNaN(n) ? null : n;
+        }
+
+        function sortKey(row, col) {
+            const td = row.querySelectorAll('td')[col];
+            if (!td) return { n: null, s: '' };
+            // data-sort (например, ISO-даты) всегда сравниваем как строки
+            if (td.dataset.sort !== undefined) return { n: null, s: String(td.dataset.sort).toLowerCase() };
+            const raw = (td.innerText || '').trim();
+            const n = sortNumeric(raw);
+            const hasDigit = /[0-9]/.test(raw);
+            return { n: hasDigit && n !== null ? n : null, s: raw.toLowerCase() };
+        }
+
+        function sortCompare(a, b) {
+            if (a.n !== null && b.n !== null) return a.n - b.n;
+            return a.s < b.s ? -1 : a.s > b.s ? 1 : 0;
+        }
+
+        function applySort(tableId, col, dir) {
+            const table = document.getElementById(tableId);
+            if (!table) return;
+            const tbody = table.querySelector('tbody');
+            if (!tbody) return;
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            // Группируем строки: обычная строка + идущая сразу за ней детальная (shift-details)
+            const groups = [];
+            let current = null;
+            for (const r of rows) {
+                if (r.classList.contains('shift-details')) {
+                    if (current) current.pair = r;
+                    continue;
+                }
+                current = { row: r, pair: null };
+                groups.push(current);
+            }
+            if (groups.length === 0) return;
+            const mul = dir === 'asc' ? 1 : -1;
+            const sorted = groups.slice().sort((x, y) => mul * sortCompare(sortKey(x.row, col), sortKey(y.row, col)));
+            const changed = groups.some((g, i) => g !== sorted[i]);
+            if (!changed) return;
+            const frag = document.createDocumentFragment();
+            sorted.forEach(g => {
+                frag.appendChild(g.row);
+                if (g.pair) frag.appendChild(g.pair);
+            });
+            tbody.appendChild(frag);
+        }
+
+        function renderSortIndicators(table, col, dir) {
+            table.querySelectorAll('thead th').forEach((th, i) => {
+                const arrow = th.querySelector('.arrow');
+                if (!arrow) return;
+                th.classList.toggle('sorted', i === col);
+                arrow.textContent = i === col ? (dir === 'asc' ? '▲' : '▼') : '↕';
+            });
+        }
+
+        function initSortableTables() {
+            document.querySelectorAll('table[id]').forEach(table => {
+                const tbody = table.querySelector('tbody');
+                if (!tbody) return;
+                const ths = Array.from(table.querySelectorAll('thead th'));
+                ths.forEach((th, i) => {
+                    const label = (th.innerText || '').trim();
+                    if (sortNoSortCols.has(label)) return;
+                    th.classList.add('sortable-th');
+                    th.innerHTML = th.innerHTML.trim() + ' <span class="arrow">↕</span>';
+                    th.onclick = () => {
+                        const st = sortState[table.id] || { col: -1, dir: 'asc' };
+                        let dir;
+                        if (st.col === i) dir = st.dir === 'asc' ? 'desc' : 'asc';
+                        else dir = 'asc';
+                        sortState[table.id] = { col: i, dir };
+                        renderSortIndicators(table, i, dir);
+                        applySort(table.id, i, dir);
+                    };
+                });
+                // После перерисовки таблицы (innerHTML tbody) сортировка сохраняется
+                let timer = null;
+                new MutationObserver(() => {
+                    clearTimeout(timer);
+                    timer = setTimeout(() => {
+                        const st = sortState[table.id];
+                        if (st && st.col >= 0) applySort(table.id, st.col, st.dir);
+                    }, 30);
+                }).observe(tbody, { childList: true, subtree: true });
+            });
+        }
+
+        // === СОРТИРОВКА СЕТОК (категории, ТЦ) ===
+        function sortCategories(dir) {
+            document.getElementById('catSortAsc').classList.toggle('active', dir === 'asc');
+            document.getElementById('catSortDesc').classList.toggle('active', dir === 'desc');
+            const grid = document.getElementById('categoriesGrid');
+            const cards = Array.from(grid.querySelectorAll('.cat-cover-card'));
+            cards.sort((a, b) => {
+                const na = (a.querySelector('.cat-name').innerText || '').toLowerCase();
+                const nb = (b.querySelector('.cat-name').innerText || '').toLowerCase();
+                return dir === 'asc' ? na.localeCompare(nb, 'ru') : nb.localeCompare(na, 'ru');
+            });
+            cards.forEach(c => grid.appendChild(c));
+        }
+
+        function sortTcs(dir) {
+            document.getElementById('tcSortAsc').classList.toggle('active', dir === 'asc');
+            document.getElementById('tcSortDesc').classList.toggle('active', dir === 'desc');
+            const grid = document.getElementById('tcsGrid');
+            const cards = Array.from(grid.querySelectorAll('.category-card'));
+            cards.sort((a, b) => {
+                const nameEl = c => (c.querySelector('div:first-child').innerText || '').toLowerCase();
+                return dir === 'asc' ? nameEl(a).localeCompare(nameEl(b), 'ru') : nameEl(b).localeCompare(nameEl(a), 'ru');
+            });
+            cards.forEach(c => grid.appendChild(c));
+        }
+
         setInterval(updateNotifCount, 30000);
         updateNotifCount();
+        initSortableTables();
         initSection();
     </script>
 </body>

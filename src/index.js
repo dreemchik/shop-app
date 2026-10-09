@@ -232,6 +232,20 @@ async function createProduct(env, request) {
     data.category_id,
     data.photo
   );
+  // Уведомляем всех продавцов о новом товаре
+  try {
+    const employees = await all(env, "SELECT id FROM users WHERE role = 'employee'");
+    const message = `\uD83C\uDD95 \u041D\u043E\u0432\u044B\u0439 \u0442\u043E\u0432\u0430\u0440: ${data.name} (\u0430\u0440\u0442\u0438\u043A\u0443\u043B ${data.article}), \u0446\u0435\u043D\u0430 ${data.price} \u20BD`;
+    for (const emp of employees) {
+      await run(
+        env,
+        "INSERT INTO notifications (message, created_at, target_user_id) VALUES (?, ?, ?)",
+        message,
+        nowISO(),
+        emp.id
+      );
+    }
+  } catch (e) {}
   return json({ success: true, id: Number(res.meta.last_row_id) });
 }
 __name(createProduct, "createProduct");
@@ -602,17 +616,35 @@ async function deleteDocument(env, _request, params) {
   return json({ success: true });
 }
 __name(deleteDocument, "deleteDocument");
-async function listNotifications(env) {
+async function listNotifications(env, request) {
+  const { searchParams } = new URL(request.url);
+  const user_id = searchParams.get("user_id");
+  if (user_id) {
+    return json(await all(env, "SELECT * FROM notifications WHERE target_user_id = ? ORDER BY id DESC LIMIT 50", user_id));
+  }
   return json(await all(env, "SELECT * FROM notifications ORDER BY id DESC LIMIT 50"));
 }
 __name(listNotifications, "listNotifications");
-async function unreadCount(env) {
-  const row = await first(env, "SELECT COUNT(*) as count FROM notifications WHERE is_read = 0");
+async function unreadCount(env, request) {
+  const { searchParams } = new URL(request.url);
+  const user_id = searchParams.get("user_id");
+  let row;
+  if (user_id) {
+    row = await first(env, "SELECT COUNT(*) as count FROM notifications WHERE target_user_id = ? AND is_read = 0", user_id);
+  } else {
+    row = await first(env, "SELECT COUNT(*) as count FROM notifications WHERE is_read = 0");
+  }
   return json({ count: Number(row.count) });
 }
 __name(unreadCount, "unreadCount");
-async function readAll(env) {
-  await run(env, "UPDATE notifications SET is_read = 1 WHERE is_read = 0");
+async function readAll(env, request) {
+  const { searchParams } = new URL(request.url);
+  const user_id = searchParams.get("user_id");
+  if (user_id) {
+    await run(env, "UPDATE notifications SET is_read = 1 WHERE target_user_id = ? AND is_read = 0", user_id);
+  } else {
+    await run(env, "UPDATE notifications SET is_read = 1 WHERE is_read = 0");
+  }
   return json({ success: true });
 }
 __name(readAll, "readAll");

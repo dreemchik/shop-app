@@ -429,6 +429,8 @@ async function currentShift(env, _request, params, user) {
 __name(currentShift, "currentShift");
 async function closeShift(env, request, _params, user) {
   const { shift_id } = await reqJson(request);
+  if (!shift_id)
+    return fail("Смена не указана", 400);
   const shift = await first(env, `
         SELECT shifts.*, users.full_name, users.tc FROM shifts
         JOIN users ON shifts.seller_id = users.id
@@ -537,6 +539,10 @@ __name(updateShiftNotes, "updateShiftNotes");
 async function createSale(env, request, _params, user) {
   const body = await reqJson(request);
   const { product_id, quantity, discount, discount_reason, payment_method, custom_price, seller_id, shift_id } = body;
+  if (!product_id || !shift_id || !seller_id)
+    return fail("Не хватает данных для оформления продажи", 400);
+  if (!(Number(quantity) > 0))
+    return fail("Количество должно быть больше нуля", 400);
   const guard = forbidNotOwner(user, seller_id);
   if (guard)
     return guard;

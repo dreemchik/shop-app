@@ -1549,17 +1549,32 @@
             window.location.href = '/';
         }
 
-        // Все запросы к API автоматически получают токен
+        // Все запросы к API автоматически получают токен.
+        // Если токен истёк (401) — сбрасываем сессию и отправляем на страницу входа.
         const _rawFetch = window.fetch.bind(window);
+        let _redirecting = false;
+        function _forceLogout() {
+            if (_redirecting) return;
+            _redirecting = true;
+            localStorage.clear();
+            window.location.href = '/';
+        }
         window.fetch = function (input, init) {
             init = init || {};
             const url = typeof input === 'string' ? input : (input && input.url) || '';
-            if (url.startsWith('/api/') && authToken) {
+            const isApi = url.startsWith('/api/');
+            if (isApi && authToken) {
                 const headers = new Headers(init.headers || {});
                 headers.set('Authorization', 'Bearer ' + authToken);
                 init = Object.assign({}, init, { headers });
             }
-            return _rawFetch(input, init);
+            const p = _rawFetch(input, init);
+            if (isApi && !url.endsWith('/api/login')) {
+                p.then(res => {
+                    if (res.status === 401) _forceLogout();
+                }).catch(() => {});
+            }
+            return p;
         };
 
         document.getElementById('profileGreeting').textContent = 'Здравствуйте, ' + currentFullName + '!';

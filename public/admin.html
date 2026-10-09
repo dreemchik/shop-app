@@ -287,6 +287,27 @@
         html[data-theme="dark"] .sort-control button { background: #262a31; border-color: #343b45; color: #e6e8ec; }
         html[data-theme="dark"] .sort-control button.active { border-color: #e85d75; background: #3a2028; color: #e8798f; }
 
+        /* === ГРАФИКИ === */
+        .chart-block {
+            background: #fff; border-radius: 16px; padding: 18px 20px;
+            margin-bottom: 20px; box-shadow: 0 2px 10px rgba(232, 93, 117, 0.08);
+        }
+        .chart-block h3 { margin-bottom: 14px; color: #2c3e50; font-size: 17px; }
+        .bar-chart { display: flex; align-items: flex-end; gap: 10px; min-height: 180px; overflow-x: auto; padding-bottom: 4px; }
+        .bar-col { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 54px; flex: 1; }
+        .bar-stack { display: flex; align-items: flex-end; gap: 3px; height: 150px; }
+        .bar { width: 20px; border-radius: 6px 6px 0 0; min-height: 2px; transition: height 0.3s ease; }
+        .bar-income { background: linear-gradient(180deg, #4caf50, #2e7d32); }
+        .bar-expense { background: linear-gradient(180deg, #ef5350, #c62828); }
+        .bar-revenue { background: linear-gradient(180deg, #f9768b, #e85d75); }
+        .bar-value { font-size: 11px; color: #888; white-space: nowrap; }
+        .bar-label { font-size: 11px; color: #999; white-space: nowrap; }
+        .chart-empty { color: #999; font-size: 14px; padding: 20px 0; }
+        html[data-theme="dark"] .chart-block { background: #1d2127; }
+        html[data-theme="dark"] .chart-block h3 { color: #e6e8ec; }
+        html[data-theme="dark"] .bar-value, html[data-theme="dark"] .bar-label { color: #8a9099; }
+        html[data-theme="dark"] .chart-empty { color: #8a9099; }
+
         /* === РЕДАКТОР ТОВАРА: масштаб === */
         .modal-lg { max-width: 680px; }
         .stock-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; background: #fff; padding: 12px 14px; border-radius: 12px; margin-bottom: 10px; box-shadow: 0 1px 4px rgba(232, 93, 117, 0.08); }
@@ -1007,6 +1028,13 @@
                 <p><strong>Логин:</strong> <span id="profileUsername"></span></p>
                 <p><strong>Роль:</strong> <span>Администратор</span></p>
             </div>
+            <div class="form">
+                <h3>Смена пароля</h3>
+                <input type="password" id="oldPass" placeholder="Текущий пароль" autocomplete="current-password">
+                <input type="password" id="newPass" placeholder="Новый пароль (мин. 4 символа)" autocomplete="new-password">
+                <input type="password" id="newPass2" placeholder="Повторите новый пароль" autocomplete="new-password">
+                <button onclick="submitPasswordChange()">Изменить пароль</button>
+            </div>
         </div>
 
         <!-- ТОВАРЫ -->
@@ -1022,6 +1050,12 @@
                 <input type="file" id="photo" accept="image/*">
                 <button onclick="addProduct()">Добавить</button>
                 <p style="font-size:12px;color:#999;margin-top:10px;">После создания откройте товар на редактирование и укажите остатки по ТЦ. Или добавьте товар из раздела «Категории».</p>
+            </div>
+            <div class="form">
+                <h3>Импорт из Excel / CSV</h3>
+                <p style="font-size:13px;color:#888;margin-bottom:10px;">Колонки: Артикул, Название, Описание, Цена, Категория. Категории создаются автоматически, если их нет.</p>
+                <input type="file" id="importFile" accept=".csv,.xlsx,.xls,text/csv" onchange="importProductsFile(event)">
+                <button type="button" class="btn-export" onclick="downloadImportTemplate()" style="margin-top:10px;">⬇ Скачать шаблон</button>
             </div>
             <table id="productsTable">
                 <thead>
@@ -1182,6 +1216,16 @@
         <!-- ВЫРУЧКА И ОТЧЁТЫ -->
         <div id="reportsSection" class="hidden">
             <h1>Выручка и отчёты</h1>
+
+            <div class="chart-block">
+                <h3>Выручка по месяцам</h3>
+                <div class="bar-chart" id="chartRevenue"></div>
+            </div>
+
+            <div class="chart-block">
+                <h3>Доходы и расходы по месяцам</h3>
+                <div class="bar-chart" id="chartFinance"></div>
+            </div>
 
             <h3>Смены</h3>
             <p style="font-size:13px;color:#888;margin-bottom:5px;">Нажмите «Добавить смену», чтобы записать заметки по дню и прикрепить фото тетради. Кликните по смене, чтобы посмотреть подробности.</p>
@@ -1499,10 +1543,24 @@
         const currentFullName = localStorage.getItem('fullName');
         const currentUsername = localStorage.getItem('username');
         const currentRole = localStorage.getItem('role');
+        const authToken = localStorage.getItem('token');
 
-        if (!currentUserId || currentRole !== 'admin') {
+        if (!currentUserId || currentRole !== 'admin' || !authToken) {
             window.location.href = '/';
         }
+
+        // Все запросы к API автоматически получают токен
+        const _rawFetch = window.fetch.bind(window);
+        window.fetch = function (input, init) {
+            init = init || {};
+            const url = typeof input === 'string' ? input : (input && input.url) || '';
+            if (url.startsWith('/api/') && authToken) {
+                const headers = new Headers(init.headers || {});
+                headers.set('Authorization', 'Bearer ' + authToken);
+                init = Object.assign({}, init, { headers });
+            }
+            return _rawFetch(input, init);
+        };
 
         document.getElementById('profileGreeting').textContent = 'Здравствуйте, ' + currentFullName + '!';
         document.getElementById('profileName').textContent = currentFullName;
@@ -1548,7 +1606,7 @@
             if (section === 'tcs') loadTcs();
             if (section === 'sales') { checkShift(); loadAllProducts(); loadAllSales(); loadSalesFilter(); }
             if (section === 'tasks') loadTasks();
-            if (section === 'reports') { loadReports(); loadShiftGrid(); }
+            if (section === 'reports') { loadReports(); loadShiftGrid(); loadCharts(); }
             if (section === 'finance') loadFinance();
             if (section === 'docs') loadAllDocuments();
             if (section === 'users') loadUsers();
@@ -2539,7 +2597,165 @@ const grid = document.getElementById('categoriesGrid');
 
         function exportFinance() {
             const month = finMonth || new Date().toISOString().slice(0, 7);
-            window.location.href = '/api/transactions/export?month=' + encodeURIComponent(month);
+            window.location.href = '/api/transactions/export?month=' + encodeURIComponent(month) + '&token=' + encodeURIComponent(authToken);
+        }
+
+        // === ГРАФИКИ ===
+        function renderBarChart(containerId, groups) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            if (!groups.length) {
+                el.innerHTML = '<div class="chart-empty">Пока нет данных за выбранный период.</div>';
+                return;
+            }
+            const max = Math.max(1, ...groups.map(g => Math.max(g.income || 0, g.expense || 0, g.revenue || 0)));
+            el.innerHTML = groups.map(g => {
+                const month = g.month;
+                const short = month ? month.slice(5) + '.' + month.slice(2, 4) : (g.date || '').slice(5);
+                const bars = [];
+                if (g.revenue !== undefined) {
+                    bars.push(`<div class="bar bar-revenue" style="height:${Math.max(2, (g.revenue / max) * 150)}px" title="Выручка"></div>`);
+                } else {
+                    if (g.income) bars.push(`<div class="bar bar-income" style="height:${Math.max(2, (g.income / max) * 150)}px" title="Доход"></div>`);
+                    if (g.expense) bars.push(`<div class="bar bar-expense" style="height:${Math.max(2, (g.expense / max) * 150)}px" title="Расход"></div>`);
+                }
+                const value = g.revenue !== undefined ? g.revenue : (g.income || 0);
+                return `<div class="bar-col">
+                    <div class="bar-value">${finMoney(value)}</div>
+                    <div class="bar-stack">${bars.join('')}</div>
+                    <div class="bar-label">${short}</div>
+                </div>`;
+            }).join('');
+        }
+
+        async function loadCharts() {
+            try {
+                const data = await fetch('/api/analytics?months=12&days=30').then(r => r.json());
+                const financeMap = {};
+                (data.finance || []).forEach(f => { financeMap[f.month] = f; });
+                const months = (data.byMonth || []).slice().reverse();
+                if (months.length) {
+                    renderBarChart('chartRevenue', months.map(m => ({ month: m.month, revenue: Number(m.revenue || 0) })));
+                } else {
+                    renderBarChart('chartRevenue', []);
+                }
+                if (months.length) {
+                    renderBarChart('chartFinance', months.map(m => {
+                        const f = financeMap[m.month] || {};
+                        return { month: m.month, income: Number(f.income || 0), expense: Number(f.expense || 0) };
+                    }));
+                } else {
+                    renderBarChart('chartFinance', []);
+                }
+            } catch (e) {
+                renderBarChart('chartRevenue', []);
+                renderBarChart('chartFinance', []);
+            }
+        }
+
+        // === СМЕНА ПАРОЛЯ ===
+        async function submitPasswordChange() {
+            const oldPass = document.getElementById('oldPass').value;
+            const newPass = document.getElementById('newPass').value;
+            const newPass2 = document.getElementById('newPass2').value;
+            if (!oldPass || !newPass) { alert('Заполните оба пароля'); return; }
+            if (newPass !== newPass2) { alert('Новые пароли не совпадают'); return; }
+            if (newPass.length < 3) { alert('Новый пароль слишком короткий (минимум 3 символа)'); return; }
+            const res = await fetch('/api/password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ old_password: oldPass, new_password: newPass })
+            });
+            const data = await res.json();
+            if (!res.ok) { alert('Ошибка: ' + (data.error || 'не удалось изменить пароль')); return; }
+            document.getElementById('oldPass').value = '';
+            document.getElementById('newPass').value = '';
+            document.getElementById('newPass2').value = '';
+            alert('Пароль изменён');
+        }
+
+        // === ИМПОРТ ТОВАРОВ ИЗ EXCEL/CSV ===
+        async function importProductsFile(event) {
+            const file = event.target.files && event.target.files[0];
+            if (!file) return;
+            const items = await parseProductsFile(file);
+            event.target.value = '';
+            if (!items.length) { alert('Не удалось прочитать файл. Проверьте, что в нём есть строка заголовков.'); return; }
+            if (!confirm('Найдено строк: ' + items.length + '. Добавить эти товары в каталог?')) return;
+            const res = await fetch('/api/products/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(items)
+            });
+            const data = await res.json();
+            if (!res.ok) { alert('Ошибка: ' + (data.error || 'не удалось импортировать')); return; }
+            alert('Готово!\nДобавлено товаров: ' + data.created + '\nПропущено строк (нет артикула/названия/цены): ' + data.skipped);
+            loadProducts();
+        }
+
+        function parseProductsFile(file) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(parseProductsText(String(e.target.result || '')));
+                reader.onerror = () => resolve([]);
+                reader.readAsText(file, 'utf-8');
+            });
+        }
+
+        function parseProductsText(text) {
+            const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+            if (lines.length < 2) return [];
+            const sep = lines[0].includes('\t') ? '\t' : ';';
+            const header = splitCsvLine(lines[0], sep).map(h => h.trim().toLowerCase());
+            const idx = {
+                article: header.findIndex(h => ['артикул', 'article', 'код', 'sku'].includes(h)),
+                name: header.findIndex(h => ['название', 'наименование', 'name', 'товар'].includes(h)),
+                price: header.findIndex(h => ['цена', 'price', 'стоимость'].includes(h)),
+                category: header.findIndex(h => ['категория', 'category', 'раздел'].includes(h)),
+                description: header.findIndex(h => ['описание', 'description', 'комментарий'].includes(h))
+            };
+            const items = [];
+            for (let i = 1; i < lines.length; i++) {
+                const cells = splitCsvLine(lines[i], sep);
+                items.push({
+                    article: idx.article >= 0 ? (cells[idx.article] || '').trim() : '',
+                    name: idx.name >= 0 ? (cells[idx.name] || '').trim() : '',
+                    price: idx.price >= 0 ? parseFloat((cells[idx.price] || '').replace(/\s/g, '').replace(',', '.')) : 0,
+                    category: idx.category >= 0 ? (cells[idx.category] || '').trim() : '',
+                    description: idx.description >= 0 ? (cells[idx.description] || '').trim() : ''
+                });
+            }
+            return items;
+        }
+
+        function splitCsvLine(line, sep) {
+            const out = [];
+            let cur = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                const ch = line[i];
+                if (ch === '"') {
+                    if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
+                    else inQuotes = !inQuotes;
+                } else if (ch === sep && !inQuotes) {
+                    out.push(cur);
+                    cur = '';
+                } else {
+                    cur += ch;
+                }
+            }
+            out.push(cur);
+            return out;
+        }
+
+        function downloadImportTemplate() {
+            const csv = '\uFEFFАртикул;Название;Описание;Цена;Категория\nАРТ-001;Пример товара;Краткое описание;1500;Одежда\n';
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'shablon-importa-tovarov.csv';
+            a.click();
+            URL.revokeObjectURL(a.href);
         }
 
         // === ДОКУМЕНТЫ ===

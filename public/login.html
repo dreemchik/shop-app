@@ -226,6 +226,7 @@
                 localStorage.setItem('fullName', data.fullName);
                 localStorage.setItem('tc', data.tc || '');
                 localStorage.setItem('role', data.role);
+                localStorage.setItem('token', data.token);
 
                 if (data.role === 'admin') {
                     window.location.href = '/admin.html';

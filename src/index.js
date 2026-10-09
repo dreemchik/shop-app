@@ -71,13 +71,94 @@ async function serveUpload(env, url) {
   return new Response(value, { headers });
 }
 __name(serveUpload, "serveUpload");
+// ==== АВТОРИЗАЦИЯ: PBKDF2-пароли + HMAC-токены ====
+var encoder = /* @__PURE__ */ __name(new TextEncoder(), "encoder");
+var SECRET_FALLBACK = "show-app-dev-secret";
+async function authSecret(env) {
+  return encoder.encode(env.AUTH_SECRET || SECRET_FALLBACK);
+}
+__name(authSecret, "authSecret");
+function toB64(bytes) {
+  let s = "";
+  for (const b of new Uint8Array(bytes))
+    s += String.fromCharCode(b);
+  return btoa(s);
+}
+__name(toB64, "toB64");
+function fromB64(str) {
+  const bin = atob(str);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++)
+    out[i] = bin.charCodeAt(i);
+  return out;
+}
+__name(fromB64, "fromB64");
+function toHex(bytes) {
+  return Array.from(new Uint8Array(bytes)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+__name(toHex, "toHex");
+function randomSalt() {
+  return toHex(crypto.getRandomValues(new Uint8Array(16)));
+}
+__name(randomSalt, "randomSalt");
+async function hashPassword(password, salt) {
+  const keyMaterial = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", salt: encoder.encode(salt), iterations: 100000, hash: "SHA-256" }, keyMaterial, 256);
+  return toB64(bits);
+}
+__name(hashPassword, "hashPassword");
+async function verifyPassword(user, password) {
+  if (user.password_salt) {
+    const hash = await hashPassword(password, user.password_salt);
+    return hash === user.password;
+  }
+  return user.password === password;
+}
+__name(verifyPassword, "verifyPassword");
+async function issueToken(env, user) {
+  const payload = toB64(encoder.encode(JSON.stringify({ uid: user.id, role: user.role, exp: Date.now() + 1000 * 60 * 60 * 24 * 30 })));
+  const key = await crypto.subtle.importKey("raw", await authSecret(env), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
+  return payload + "." + toB64(sig);
+}
+__name(issueToken, "issueToken");
+async function readToken(env, token) {
+  try {
+    if (!token || !token.includes("."))
+      return null;
+    const [payload, sig] = token.split(".");
+    const key = await crypto.subtle.importKey("raw", await authSecret(env), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+    const ok = await crypto.subtle.verify("HMAC", key, fromB64(sig), encoder.encode(payload));
+    if (!ok)
+      return null;
+    const data = JSON.parse(new TextDecoder().decode(fromB64(payload)));
+    if (!data || !data.uid || !data.exp || data.exp < Date.now())
+      return null;
+    return { id: Number(data.uid), role: data.role };
+  } catch (e) {
+    return null;
+  }
+}
+__name(readToken, "readToken");
+function tokenFromRequest(request, url) {
+  const header = request.headers.get("Authorization") || "";
+  if (header.startsWith("Bearer "))
+    return header.slice(7).trim();
+  return (url && url.searchParams.get("token")) || "";
+}
+__name(tokenFromRequest, "tokenFromRequest");
 async function login(env, request) {
   const { username, password } = await reqJson(request);
-  const user = await first(env, "SELECT * FROM users WHERE username = ? AND password = ?", username, password);
-  if (!user)
+  const user = await first(env, "SELECT * FROM users WHERE username = ?", username);
+  if (!user || !(await verifyPassword(user, password)))
     return json({ success: false });
+  if (!user.password_salt) {
+    const salt = randomSalt();
+    await run(env, "UPDATE users SET password = ?, password_salt = ? WHERE id = ?", await hashPassword(password, salt), salt, user.id);
+  }
   return json({
     success: true,
+    token: await issueToken(env, user),
     role: user.role,
     userId: user.id,
     username: user.username,
@@ -86,6 +167,18 @@ async function login(env, request) {
   });
 }
 __name(login, "login");
+async function changePassword(env, request, params, user) {
+  const { old_password, new_password } = await reqJson(request);
+  if (!new_password || new_password.length < 3)
+    return fail("Новый пароль слишком короткий (минимум 3 символа)", 400);
+  const row = await first(env, "SELECT * FROM users WHERE id = ?", user.id);
+  if (!row || !(await verifyPassword(row, old_password || "")))
+    return fail("Старый пароль указан неверно", 403);
+  const salt = randomSalt();
+  await run(env, "UPDATE users SET password = ?, password_salt = ? WHERE id = ?", await hashPassword(new_password, salt), salt, user.id);
+  return json({ success: true });
+}
+__name(changePassword, "changePassword");
 async function listUsers(env) {
   const rows = await all(env, "SELECT id, username, full_name, tc, role FROM users ORDER BY id");
   return json(rows);
@@ -93,14 +186,16 @@ async function listUsers(env) {
 __name(listUsers, "listUsers");
 async function createUser(env, request) {
   const { username, password, full_name, tc, role } = await reqJson(request);
+  const salt = randomSalt();
   await run(
     env,
-    "INSERT INTO users (username, password, full_name, tc, role) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO users (username, password, full_name, tc, role, password_salt) VALUES (?, ?, ?, ?, ?, ?)",
     username,
-    password,
+    await hashPassword(password, salt),
     full_name,
     tc || "",
-    role || "employee"
+    role || "employee",
+    salt
   );
   return json({ success: true });
 }
@@ -108,11 +203,13 @@ __name(createUser, "createUser");
 async function updateUser(env, request, params) {
   const { username, password, full_name, tc, role } = await reqJson(request);
   if (password) {
+    const salt = randomSalt();
     await run(
       env,
-      "UPDATE users SET username = ?, password = ?, full_name = ?, tc = ?, role = ? WHERE id = ?",
+      "UPDATE users SET username = ?, password = ?, password_salt = ?, full_name = ?, tc = ?, role = ? WHERE id = ?",
       username,
-      password,
+      await hashPassword(password, salt),
+      salt,
       full_name,
       tc || "",
       role,
@@ -182,7 +279,7 @@ __name(deleteTc, "deleteTc");
 var PRODUCT_SELECT = `
     SELECT
         products.id, products.article, products.name, products.description,
-        products.price, products.category_id, products.photo,
+        products.price, products.category_id, products.photo, products.min_stock,
         categories.name as category_name,
         COALESCE((SELECT SUM(quantity) FROM product_stock WHERE product_id = products.id), 0) as stock
     FROM products
@@ -296,8 +393,21 @@ async function upsertProductStock(env, request) {
   return json({ success: true });
 }
 __name(upsertProductStock, "upsertProductStock");
-async function startShift(env, request) {
+function canActFor(user, sellerId) {
+  return user.role === "admin" || Number(user.id) === Number(sellerId);
+}
+__name(canActFor, "canActFor");
+function forbidNotOwner(user, sellerId) {
+  if (canActFor(user, sellerId))
+    return null;
+  return fail("Доступно только для вашей учётной записи", 403);
+}
+__name(forbidNotOwner, "forbidNotOwner");
+async function startShift(env, request, _params, user) {
   const { seller_id } = await reqJson(request);
+  const guard = forbidNotOwner(user, seller_id);
+  if (guard)
+    return guard;
   const open = await first(env, "SELECT * FROM shifts WHERE seller_id = ? AND status = 'open'", seller_id);
   if (open)
     return json({ success: false, error: "\u0421\u043C\u0435\u043D\u0430 \u0443\u0436\u0435 \u043E\u0442\u043A\u0440\u044B\u0442\u0430", shift: open });
@@ -305,7 +415,10 @@ async function startShift(env, request) {
   return json({ success: true, shift_id: Number(res.meta.last_row_id) });
 }
 __name(startShift, "startShift");
-async function currentShift(env, _request, params) {
+async function currentShift(env, _request, params, user) {
+  const guard = forbidNotOwner(user, params.seller_id);
+  if (guard)
+    return guard;
   const row = await first(
     env,
     "SELECT * FROM shifts WHERE seller_id = ? AND status = 'open' ORDER BY id DESC LIMIT 1",
@@ -314,7 +427,7 @@ async function currentShift(env, _request, params) {
   return json(row || null);
 }
 __name(currentShift, "currentShift");
-async function closeShift(env, request) {
+async function closeShift(env, request, _params, user) {
   const { shift_id } = await reqJson(request);
   const shift = await first(env, `
         SELECT shifts.*, users.full_name, users.tc FROM shifts
@@ -322,6 +435,9 @@ async function closeShift(env, request) {
         WHERE shifts.id = ?`, shift_id);
   if (!shift)
     return json({ error: "\u0421\u043C\u0435\u043D\u0430 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430" }, 404);
+  const guard = forbidNotOwner(user, shift.seller_id);
+  if (guard)
+    return guard;
   const totalRow = await first(env, "SELECT COALESCE(SUM(total), 0) as total FROM sales WHERE shift_id = ?", shift_id);
   const total = Number(totalRow.total);
   const endTime = nowISO();
@@ -362,7 +478,10 @@ async function closedShifts(env) {
   return json(rows);
 }
 __name(closedShifts, "closedShifts");
-async function myShifts(env, _request, params) {
+async function myShifts(env, _request, params, user) {
+  const guard = forbidNotOwner(user, params.seller_id);
+  if (guard)
+    return guard;
   const rows = await all(
     env,
     "SELECT * FROM shifts WHERE seller_id = ? AND status = 'closed' ORDER BY id DESC",
@@ -402,8 +521,11 @@ async function createShiftWithNotes(env, request) {
   return json({ success: true, shift_id: Number(res.meta.last_row_id) });
 }
 __name(createShiftWithNotes, "createShiftWithNotes");
-async function updateShiftNotes(env, request) {
+async function updateShiftNotes(env, request, _params, user) {
   const { seller_id, notes, photos } = await parseShiftForm(env, request);
+  const guard = forbidNotOwner(user, seller_id);
+  if (guard)
+    return guard;
   const shift = await first(env, "SELECT * FROM shifts WHERE seller_id = ? AND status = 'open'", seller_id);
   if (!shift)
     return json({ success: false, error: "\u041E\u0442\u043A\u0440\u044B\u0442\u0430\u044F \u0441\u043C\u0435\u043D\u0430 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430" });
@@ -412,13 +534,18 @@ async function updateShiftNotes(env, request) {
   return json({ success: true, shift_id: shift.id });
 }
 __name(updateShiftNotes, "updateShiftNotes");
-async function createSale(env, request) {
+async function createSale(env, request, _params, user) {
   const body = await reqJson(request);
   const { product_id, quantity, discount, discount_reason, payment_method, custom_price, seller_id, shift_id } = body;
+  const guard = forbidNotOwner(user, seller_id);
+  if (guard)
+    return guard;
   const shift = await first(env, "SELECT * FROM shifts WHERE id = ? AND status = 'open'", shift_id);
   if (!shift)
     return json({ error: "\u0421\u043C\u0435\u043D\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0442\u0430" }, 400);
-  const product = await first(env, "SELECT price FROM products WHERE id = ?", product_id);
+  if (Number(shift.seller_id) !== Number(seller_id))
+    return json({ error: "\u0421\u043C\u0435\u043D\u0430 \u043D\u0435 \u0432\u0430\u0448\u0430" }, 400);
+  const product = await first(env, "SELECT id, price, name, article, min_stock FROM products WHERE id = ?", product_id);
   if (!product)
     return json({ error: "\u0422\u043E\u0432\u0430\u0440 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D" }, 500);
   const stockRow = await first(
@@ -457,9 +584,34 @@ async function createSale(env, request) {
     const newQty = Math.max(0, Number(row.quantity) - Number(quantity));
     await run(env, "UPDATE product_stock SET quantity = ? WHERE id = ?", newQty, row.id);
   }
+  await notifyLowStock(env, product);
   return json({ success: true, total });
 }
 __name(createSale, "createSale");
+async function notifyLowStock(env, product) {
+  try {
+    const minStock = product.min_stock == null ? 3 : Number(product.min_stock);
+    const remaining = await first(
+      env,
+      "SELECT COALESCE(SUM(quantity), 0) as total FROM product_stock WHERE product_id = ?",
+      product.id
+    );
+    if (Number(remaining.total) > minStock)
+      return;
+    const admins = await all(env, "SELECT id FROM users WHERE role = 'admin'");
+    const message = `\u26A0\uFE0F \u041D\u0438\u0437\u043A\u0438\u0439 \u043E\u0441\u0442\u0430\u0442\u043E\u043A: ${product.name} (\u0430\u0440\u0442\u0438\u043A\u0443\u043B ${product.article}) \u2014 \u043E\u0441\u0442\u0430\u043B\u043E\u0441\u044C ${remaining.total} \u0448\u0442`;
+    for (const adm of admins) {
+      await run(
+        env,
+        "INSERT INTO notifications (message, created_at, target_user_id) VALUES (?, ?, ?)",
+        message,
+        nowISO(),
+        adm.id
+      );
+    }
+  } catch (e) {}
+}
+__name(notifyLowStock, "notifyLowStock");
 async function salesToday(env) {
   const rows = await all(env, `
         SELECT sales.*, products.article, products.name, users.full_name as seller_name
@@ -471,7 +623,13 @@ async function salesToday(env) {
   return json(rows);
 }
 __name(salesToday, "salesToday");
-async function salesByShift(env, _request, params) {
+async function salesByShift(env, _request, params, user) {
+  const shift = await first(env, "SELECT seller_id FROM shifts WHERE id = ?", params.shift_id);
+  if (!shift)
+    return json([]);
+  const guard = forbidNotOwner(user, shift.seller_id);
+  if (guard)
+    return guard;
   const rows = await all(env, `
         SELECT sales.*, products.article, products.name
         FROM sales JOIN products ON sales.product_id = products.id
@@ -479,10 +637,13 @@ async function salesByShift(env, _request, params) {
   return json(rows);
 }
 __name(salesByShift, "salesByShift");
-async function deleteSale(env, _request, params) {
+async function deleteSale(env, _request, params, user) {
   const sale = await first(env, "SELECT * FROM sales WHERE id = ?", params.id);
   if (!sale)
     return json({ error: "\u041F\u0440\u043E\u0434\u0430\u0436\u0430 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430" }, 404);
+  const guard = forbidNotOwner(user, sale.seller_id);
+  if (guard)
+    return guard;
   const shift = await first(env, "SELECT * FROM shifts WHERE id = ? AND status = 'open'", sale.shift_id);
   if (!shift)
     return json({ error: "\u0421\u043C\u0435\u043D\u0430 \u0437\u0430\u043A\u0440\u044B\u0442\u0430, \u043E\u0442\u043C\u0435\u043D\u0430 \u043D\u0435\u0432\u043E\u0437\u043C\u043E\u0436\u043D\u0430" }, 400);
@@ -494,8 +655,11 @@ async function deleteSale(env, _request, params) {
   return json({ success: true });
 }
 __name(deleteSale, "deleteSale");
-async function productReports(env, request, params) {
+async function productReports(env, request, params, user) {
   const { searchParams } = new URL(request.url);
+  const guard = forbidNotOwner(user, params.seller_id);
+  if (guard)
+    return guard;
   const date_from = searchParams.get("date_from");
   const date_to = searchParams.get("date_to");
   let query = `
@@ -533,7 +697,10 @@ async function listTasks(env) {
   return json(rows);
 }
 __name(listTasks, "listTasks");
-async function userTasks(env, _request, params) {
+async function userTasks(env, _request, params, user) {
+  const guard = forbidNotOwner(user, params.user_id);
+  if (guard)
+    return guard;
   return json(await all(env, "SELECT * FROM tasks WHERE assigned_to = ? ORDER BY id DESC", params.user_id));
 }
 __name(userTasks, "userTasks");
@@ -550,7 +717,15 @@ async function createTask(env, request) {
   return json({ success: true });
 }
 __name(createTask, "createTask");
-async function doneTask(env, _request, params) {
+async function doneTask(env, _request, params, user) {
+  if (user.role !== "admin") {
+    const task = await first(env, "SELECT assigned_to FROM tasks WHERE id = ?", params.id);
+    if (!task)
+      return json({ error: "Задача не найдена" }, 404);
+    const guard = forbidNotOwner(user, task.assigned_to);
+    if (guard)
+      return guard;
+  }
   await run(env, "UPDATE tasks SET status = 'done' WHERE id = ?", params.id);
   return json({ success: true });
 }
@@ -560,10 +735,13 @@ async function deleteTask(env, _request, params) {
   return json({ success: true });
 }
 __name(deleteTask, "deleteTask");
-async function createDocument(env, request) {
+async function createDocument(env, request, _params, user) {
   const fd = await request.formData();
   const get = /* @__PURE__ */ __name((n) => (fd.get(n) || "").toString().trim(), "get");
   const user_id = get("user_id");
+  const guard = forbidNotOwner(user, user_id);
+  if (guard)
+    return guard;
   const description = get("description");
   const amount = get("amount");
   const files = fd.getAll("photos").filter((f) => f && f.size);
@@ -586,7 +764,10 @@ async function createDocument(env, request) {
   return json({ success: true });
 }
 __name(createDocument, "createDocument");
-async function userDocuments(env, _request, params) {
+async function userDocuments(env, _request, params, user) {
+  const guard = forbidNotOwner(user, params.user_id);
+  if (guard)
+    return guard;
   return json(await all(env, "SELECT * FROM documents WHERE user_id = ? ORDER BY id DESC", params.user_id));
 }
 __name(userDocuments, "userDocuments");
@@ -611,39 +792,54 @@ async function updateDocumentStatus(env, request, params) {
   return json({ success: true });
 }
 __name(updateDocumentStatus, "updateDocumentStatus");
-async function deleteDocument(env, _request, params) {
+async function deleteDocument(env, _request, params, user) {
+  if (user.role !== "admin") {
+    const doc = await first(env, "SELECT user_id FROM documents WHERE id = ?", params.id);
+    if (!doc)
+      return json({ error: "Документ не найден" }, 404);
+    const guard = forbidNotOwner(user, doc.user_id);
+    if (guard)
+      return guard;
+  }
   await run(env, "DELETE FROM documents WHERE id = ?", params.id);
   return json({ success: true });
 }
 __name(deleteDocument, "deleteDocument");
-async function listNotifications(env, request) {
+async function listNotifications(env, request, _params, user) {
   const { searchParams } = new URL(request.url);
   const user_id = searchParams.get("user_id");
+  if (user.role !== "admin" && (!user_id || Number(user_id) !== Number(user.id))) {
+    return json(await all(env, "SELECT * FROM notifications WHERE target_user_id = ? ORDER BY id DESC LIMIT 50", user.id));
+  }
   if (user_id) {
     return json(await all(env, "SELECT * FROM notifications WHERE target_user_id = ? ORDER BY id DESC LIMIT 50", user_id));
   }
   return json(await all(env, "SELECT * FROM notifications ORDER BY id DESC LIMIT 50"));
 }
 __name(listNotifications, "listNotifications");
-async function unreadCount(env, request) {
+async function unreadCount(env, request, _params, user) {
   const { searchParams } = new URL(request.url);
-  const user_id = searchParams.get("user_id");
+  const requested = searchParams.get("user_id");
   let row;
-  if (user_id) {
-    row = await first(env, "SELECT COUNT(*) as count FROM notifications WHERE target_user_id = ? AND is_read = 0", user_id);
-  } else {
+  if (user.role === "admin" && requested) {
+    row = await first(env, "SELECT COUNT(*) as count FROM notifications WHERE target_user_id = ? AND is_read = 0", requested);
+  } else if (user.role === "admin") {
     row = await first(env, "SELECT COUNT(*) as count FROM notifications WHERE is_read = 0");
+  } else {
+    row = await first(env, "SELECT COUNT(*) as count FROM notifications WHERE target_user_id = ? AND is_read = 0", user.id);
   }
   return json({ count: Number(row.count) });
 }
 __name(unreadCount, "unreadCount");
-async function readAll(env, request) {
+async function readAll(env, request, _params, user) {
   const { searchParams } = new URL(request.url);
-  const user_id = searchParams.get("user_id");
-  if (user_id) {
-    await run(env, "UPDATE notifications SET is_read = 1 WHERE target_user_id = ? AND is_read = 0", user_id);
-  } else {
+  const requested = searchParams.get("user_id");
+  if (user.role === "admin" && requested) {
+    await run(env, "UPDATE notifications SET is_read = 1 WHERE target_user_id = ? AND is_read = 0", requested);
+  } else if (user.role === "admin") {
     await run(env, "UPDATE notifications SET is_read = 1 WHERE is_read = 0");
+  } else {
+    await run(env, "UPDATE notifications SET is_read = 1 WHERE target_user_id = ? AND is_read = 0", user.id);
   }
   return json({ success: true });
 }
@@ -824,70 +1020,204 @@ async function exportTransactions(env, request) {
   });
 }
 __name(exportTransactions, "exportTransactions");
+async function analytics(env, request, _params, user) {
+  const { searchParams } = new URL(request.url);
+  const months = Math.min(24, Math.max(1, Number(searchParams.get("months") || 12)));
+  const days = Math.min(90, Math.max(1, Number(searchParams.get("days") || 30)));
+  const sellerFilter = user.role === "admin" ? searchParams.get("seller_id") : String(user.id);
+  const sellerId = sellerFilter ? Number(sellerFilter) : null;
+  const byMonth = await all(env, `
+        SELECT substr(sales.date, 1, 7) as month,
+               COALESCE(SUM(sales.total), 0) as revenue,
+               COUNT(DISTINCT sales.date) as days
+        FROM sales
+        WHERE sales.date >= ?${sellerId ? " AND sales.seller_id = " + sellerId : ""}
+        GROUP BY month ORDER BY month`, dateMonthsAgo(months - 1));
+  const dayFrom = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+  const byDay = await all(env, `
+        SELECT sales.date as date, COALESCE(SUM(sales.total), 0) as revenue
+        FROM sales
+        WHERE sales.date >= ?${sellerId ? " AND sales.seller_id = " + sellerId : ""}
+        GROUP BY sales.date ORDER BY sales.date`, dayFrom);
+  const finance = await all(env, `
+        SELECT substr(date, 1, 7) as month,
+               COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as income,
+               COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as expense
+        FROM transactions WHERE date >= ? GROUP BY month ORDER BY month`, dateMonthsAgo(months - 1));
+  return json({ months, days, byMonth, byDay, finance });
+}
+__name(analytics, "analytics");
+function dateMonthsAgo(back) {
+  const d = new Date();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() - back);
+  return d.toISOString().slice(0, 7) + "-01";
+}
+__name(dateMonthsAgo, "dateMonthsAgo");
+async function importProducts(env, request) {
+  const items = await reqJson(request);
+  if (!Array.isArray(items))
+    return fail("Ожидался массив товаров", 400);
+  const categories = new Map();
+  for (const c of await all(env, "SELECT id, name FROM categories"))
+    categories.set(String(c.name).toLowerCase(), c.id);
+  let created = 0;
+  let skipped = 0;
+  const names = [];
+  for (const item of items) {
+    const article = String(item.article || "").trim();
+    const name = String(item.name || "").trim();
+    // Цена может прийти как "1500", "1500.50" или "1 500,50" (русская локаль Excel)
+    const price = Number(String(item.price === void 0 ? "" : item.price).replace(/\s/g, "").replace(",", "."));
+    if (!article || !name || !(price > 0)) {
+      skipped++;
+      continue;
+    }
+    let categoryId = null;
+    const catName = String(item.category || "").trim();
+    if (catName) {
+      const key = catName.toLowerCase();
+      if (categories.has(key)) {
+        categoryId = categories.get(key);
+      } else {
+        const res = await run(env, "INSERT INTO categories (name) VALUES (?)", catName);
+        categoryId = Number(res.meta.last_row_id);
+        categories.set(key, categoryId);
+      }
+    }
+    await run(
+      env,
+      "INSERT INTO products (article, name, description, price, stock, category_id, photo) VALUES (?, ?, ?, ?, 0, ?, NULL)",
+      article,
+      name,
+      String(item.description || "").trim(),
+      price,
+      categoryId
+    );
+    created++;
+    names.push(name);
+  }
+  if (created > 0) {
+    const employees = await all(env, "SELECT id FROM users WHERE role = 'employee'");
+    const preview = names.slice(0, 3).join(", ") + (names.length > 3 ? ` и ещё ${names.length - 3}` : "");
+    const message = `\uD83D\uDCE6 \u0414\u043E\u0431\u0430\u0432\u043B\u0435\u043D\u043E \u0442\u043E\u0432\u0430\u0440\u043E\u0432 \u0438\u0437 Excel: ${created}. ${preview}`;
+    for (const emp of employees) {
+      await run(
+        env,
+        "INSERT INTO notifications (message, created_at, target_user_id) VALUES (?, ?, ?)",
+        message,
+        nowISO(),
+        emp.id
+      );
+    }
+  }
+  return json({ success: true, created, skipped });
+}
+__name(importProducts, "importProducts");
+var ADMIN_ONLY = new Set([
+  "GET /api/users",
+  "POST /api/users",
+  "PUT /api/users/:id",
+  "DELETE /api/users/:id",
+  "POST /api/categories",
+  "PUT /api/categories/:id",
+  "DELETE /api/categories/:id",
+  "POST /api/tcs",
+  "PUT /api/tcs/:id",
+  "DELETE /api/tcs/:id",
+  "POST /api/products",
+  "PUT /api/products/:id",
+  "DELETE /api/products/:id",
+  "POST /api/products/import",
+  "POST /api/product-stock",
+  "POST /api/shifts/create",
+  "GET /api/shifts/closed",
+  "GET /api/sales/today",
+  "GET /api/tasks",
+  "POST /api/tasks",
+  "DELETE /api/tasks/:id",
+  "GET /api/documents/all",
+  "PUT /api/documents/:id/status"
+]);
+__name(ADMIN_ONLY, "ADMIN_ONLY");
 var routes = [
-  ["POST", "/api/login", login],
-  ["GET", "/api/users", listUsers],
-  ["POST", "/api/users", createUser],
-  ["PUT", "/api/users/:id", updateUser],
-  ["DELETE", "/api/users/:id", deleteUser],
-  ["GET", "/api/categories", listCategories],
-  ["POST", "/api/categories", createCategory],
-  ["PUT", "/api/categories/:id", updateCategory],
-  ["DELETE", "/api/categories/:id", deleteCategory],
-  ["GET", "/api/tcs", listTcs],
-  ["POST", "/api/tcs", createTc],
-  ["PUT", "/api/tcs/:id", updateTc],
-  ["DELETE", "/api/tcs/:id", deleteTc],
-  ["GET", "/api/products/category/:category_id", listProductsByCategory],
-  ["GET", "/api/products/:id/stock", productStock],
-  ["GET", "/api/products", listProducts],
-  ["POST", "/api/products", createProduct],
-  ["PUT", "/api/products/:id", updateProduct],
-  ["DELETE", "/api/products/:id", deleteProduct],
-  ["POST", "/api/product-stock", upsertProductStock],
-  ["POST", "/api/shifts/start", startShift],
-  ["POST", "/api/shifts/create", createShiftWithNotes],
-  ["POST", "/api/shifts/update-notes", updateShiftNotes],
-  ["GET", "/api/shifts/current/:seller_id", currentShift],
-  ["POST", "/api/shifts/close", closeShift],
-  ["GET", "/api/shifts/closed", closedShifts],
-  ["GET", "/api/shifts/my/:seller_id", myShifts],
-  ["POST", "/api/sales", createSale],
-  ["GET", "/api/sales/today", salesToday],
-  ["GET", "/api/sales/shift/:shift_id", salesByShift],
-  ["DELETE", "/api/sales/:id", deleteSale],
-  ["GET", "/api/reports/products/:seller_id", productReports],
-  ["GET", "/api/tasks/user/:user_id", userTasks],
-  ["GET", "/api/tasks", listTasks],
-  ["POST", "/api/tasks", createTask],
-  ["PUT", "/api/tasks/:id/done", doneTask],
-  ["DELETE", "/api/tasks/:id", deleteTask],
-  ["POST", "/api/documents", createDocument],
-  ["GET", "/api/documents/user/:user_id", userDocuments],
-  ["GET", "/api/documents/all", allDocuments],
-  ["PUT", "/api/documents/:id/status", updateDocumentStatus],
-  ["DELETE", "/api/documents/:id", deleteDocument],
-  ["GET", "/api/notifications", listNotifications],
-  ["GET", "/api/notifications/unread-count", unreadCount],
-  ["POST", "/api/notifications/read-all", readAll],
-  ["GET", "/api/transactions", listTransactions],
-  ["GET", "/api/transactions/months", transactionMonths],
-  ["GET", "/api/transactions/balance", transactionBalance],
-  ["POST", "/api/transactions", createTransaction],
-  ["PUT", "/api/transactions/:id", updateTransaction],
-  ["DELETE", "/api/transactions/:id", deleteTransaction],
-  ["GET", "/api/transactions/export", exportTransactions]
+  ["POST", "/api/login", login, 0],
+  ["POST", "/api/password", changePassword, 0],
+  ["GET", "/api/users", listUsers, 1],
+  ["POST", "/api/users", createUser, 1],
+  ["PUT", "/api/users/:id", updateUser, 1],
+  ["DELETE", "/api/users/:id", deleteUser, 1],
+  ["GET", "/api/categories", listCategories, 0],
+  ["POST", "/api/categories", createCategory, 1],
+  ["PUT", "/api/categories/:id", updateCategory, 1],
+  ["DELETE", "/api/categories/:id", deleteCategory, 1],
+  ["GET", "/api/tcs", listTcs, 0],
+  ["POST", "/api/tcs", createTc, 1],
+  ["PUT", "/api/tcs/:id", updateTc, 1],
+  ["DELETE", "/api/tcs/:id", deleteTc, 1],
+  ["GET", "/api/products/category/:category_id", listProductsByCategory, 0],
+  ["GET", "/api/products/:id/stock", productStock, 0],
+  ["GET", "/api/products", listProducts, 0],
+  ["POST", "/api/products", createProduct, 1],
+  ["PUT", "/api/products/:id", updateProduct, 1],
+  ["DELETE", "/api/products/:id", deleteProduct, 1],
+  ["POST", "/api/products/import", importProducts, 1],
+  ["POST", "/api/product-stock", upsertProductStock, 1],
+  ["POST", "/api/shifts/start", startShift, 0],
+  ["POST", "/api/shifts/create", createShiftWithNotes, 1],
+  ["POST", "/api/shifts/update-notes", updateShiftNotes, 0],
+  ["GET", "/api/shifts/current/:seller_id", currentShift, 0],
+  ["POST", "/api/shifts/close", closeShift, 0],
+  ["GET", "/api/shifts/closed", closedShifts, 1],
+  ["GET", "/api/shifts/my/:seller_id", myShifts, 0],
+  ["POST", "/api/sales", createSale, 0],
+  ["GET", "/api/sales/today", salesToday, 1],
+  ["GET", "/api/sales/shift/:shift_id", salesByShift, 0],
+  ["DELETE", "/api/sales/:id", deleteSale, 0],
+  ["GET", "/api/reports/products/:seller_id", productReports, 0],
+  ["GET", "/api/tasks/user/:user_id", userTasks, 0],
+  ["GET", "/api/tasks", listTasks, 1],
+  ["POST", "/api/tasks", createTask, 1],
+  ["PUT", "/api/tasks/:id/done", doneTask, 0],
+  ["DELETE", "/api/tasks/:id", deleteTask, 1],
+  ["POST", "/api/documents", createDocument, 0],
+  ["GET", "/api/documents/user/:user_id", userDocuments, 0],
+  ["GET", "/api/documents/all", allDocuments, 1],
+  ["PUT", "/api/documents/:id/status", updateDocumentStatus, 1],
+  ["DELETE", "/api/documents/:id", deleteDocument, 0],
+  ["GET", "/api/notifications", listNotifications, 0],
+  ["GET", "/api/notifications/unread-count", unreadCount, 0],
+  ["POST", "/api/notifications/read-all", readAll, 0],
+  ["GET", "/api/transactions", listTransactions, 0],
+  ["GET", "/api/transactions/months", transactionMonths, 0],
+  ["GET", "/api/transactions/balance", transactionBalance, 0],
+  ["POST", "/api/transactions", createTransaction, 0],
+  ["PUT", "/api/transactions/:id", updateTransaction, 0],
+  ["DELETE", "/api/transactions/:id", deleteTransaction, 0],
+  ["GET", "/api/transactions/export", exportTransactions, 0],
+  ["GET", "/api/analytics", analytics, 0]
 ];
+__name(routes, "routes");
 async function handleApi(env, request, url) {
   const { pathname } = url;
   const method = request.method;
-  for (const [m, pattern, handler] of routes) {
+  for (const [m, pattern, handler, level] of routes) {
     if (method !== m)
       continue;
     const params = match(pattern, pathname);
     if (params !== null) {
+      if (level > 0) {
+        const user = await readToken(env, tokenFromRequest(request, url));
+        if (!user)
+          return json({ error: "Требуется вход" }, 401);
+        if (user.role !== "admin")
+          return json({ error: "Недостаточно прав" }, 403);
+      }
       try {
-        return await handler(env, request, params);
+        const user = await readToken(env, tokenFromRequest(request, url));
+        if (!user && pathname !== "/api/login")
+          return json({ error: "Требуется вход" }, 401);
+        return await handler(env, request, params, user);
       } catch (e) {
         return fail(e.message);
       }

@@ -919,6 +919,13 @@
                 <p><strong>Роль:</strong> <span>Сотрудник</span></p>
                 <p><strong>Торговый центр:</strong> <span id="profileTc"></span></p>
             </div>
+            <div class="form">
+                <h3>Смена пароля</h3>
+                <input type="password" id="oldPass" placeholder="Текущий пароль" autocomplete="current-password">
+                <input type="password" id="newPass" placeholder="Новый пароль (мин. 4 символа)" autocomplete="new-password">
+                <input type="password" id="newPass2" placeholder="Повторите новый пароль" autocomplete="new-password">
+                <button onclick="submitPasswordChange()">Изменить пароль</button>
+            </div>
         </div>
 
         <!-- ДНЕВНЫЕ ПРОДАЖИ -->
@@ -1236,8 +1243,22 @@
         const fullName = localStorage.getItem('fullName');
         const username = localStorage.getItem('username');
         const tc = localStorage.getItem('tc') || '—';
+        const authToken = localStorage.getItem('token');
 
-        if (!userId) { window.location.href = '/'; }
+        if (!userId || !authToken) { window.location.href = '/'; }
+
+        // Все запросы к API автоматически получают токен
+        const _rawFetch = window.fetch.bind(window);
+        window.fetch = function (input, init) {
+            init = init || {};
+            const url = typeof input === 'string' ? input : (input && input.url) || '';
+            if (url.startsWith('/api/') && authToken) {
+                const headers = new Headers(init.headers || {});
+                headers.set('Authorization', 'Bearer ' + authToken);
+                init = Object.assign({}, init, { headers });
+            }
+            return _rawFetch(input, init);
+        };
 
         document.getElementById('profileGreeting').textContent = 'Здравствуйте, ' + fullName + '!';
         document.getElementById('profileName').textContent = fullName;
@@ -1925,7 +1946,28 @@
 
         function exportFinance() {
             const month = finMonth || new Date().toISOString().slice(0, 7);
-            window.location.href = '/api/transactions/export?month=' + encodeURIComponent(month);
+            window.location.href = '/api/transactions/export?month=' + encodeURIComponent(month) + '&token=' + encodeURIComponent(authToken);
+        }
+
+        // === СМЕНА ПАРОЛЯ ===
+        async function submitPasswordChange() {
+            const oldPass = document.getElementById('oldPass').value;
+            const newPass = document.getElementById('newPass').value;
+            const newPass2 = document.getElementById('newPass2').value;
+            if (!oldPass || !newPass) { alert('Заполните оба пароля'); return; }
+            if (newPass !== newPass2) { alert('Новые пароли не совпадают'); return; }
+            if (newPass.length < 3) { alert('Новый пароль слишком короткий (минимум 3 символа)'); return; }
+            const res = await fetch('/api/password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ old_password: oldPass, new_password: newPass })
+            });
+            const data = await res.json();
+            if (!res.ok) { alert('Ошибка: ' + (data.error || 'не удалось изменить пароль')); return; }
+            document.getElementById('oldPass').value = '';
+            document.getElementById('newPass').value = '';
+            document.getElementById('newPass2').value = '';
+            alert('Пароль изменён');
         }
 
         async function loadTasks() {

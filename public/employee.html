@@ -385,6 +385,8 @@
         .filter-row select { max-width: 250px; margin: 0; }
         .edit { background: #fff; color: #e85d75; border: 2px solid #f0c4cd; border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
         .edit:hover { background: #e85d75; color: #fff; border-color: #e85d75; }
+        .btn-export { background: #1f8a4c; color: #fff; border: none; border-radius: 14px; padding: 14px 20px; font-size: 15px; font-weight: 600; cursor: pointer; }
+        .btn-export:hover { background: #166b3a; }
 
         .period-buttons { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
         .period-buttons button {
@@ -1047,6 +1049,7 @@
                 <label>Месяц:</label>
                 <select id="finMonth" onchange="loadFinance()" style="max-width:220px;"></select>
                 <button class="add-product-btn" style="margin:0;" onclick="openFinanceModal()">➕ Добавить запись</button>
+                <button class="btn-export" onclick="exportFinance()">⬇ Экспорт в Excel</button>
             </div>
 
             <h3>Доходы</h3>
@@ -1880,6 +1883,11 @@
             const data = await res.json();
             if (data.error) { alert(data.error); return; }
             loadFinance();
+        }
+
+        function exportFinance() {
+            const month = finMonth || new Date().toISOString().slice(0, 7);
+            window.location.href = '/api/transactions/export?month=' + encodeURIComponent(month);
         }
 
         async function loadTasks() {

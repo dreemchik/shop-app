@@ -741,6 +741,57 @@ async function deleteTransaction(env, _request, params) {
   return json({ success: true });
 }
 __name(deleteTransaction, "deleteTransaction");
+async function exportTransactions(env, request) {
+  const { searchParams } = new URL(request.url);
+  const requested = searchParams.get("month") || currentMonth();
+  const month = requested === "all" ? "all" : MONTH_RE.test(requested) ? requested : currentMonth();
+  const baseQuery = `
+        SELECT t.*, u.full_name as created_by_name
+        FROM transactions t
+        LEFT JOIN users u ON t.created_by = u.id`;
+  let items;
+  if (month === "all") {
+    items = await all(env, baseQuery + " ORDER BY t.date ASC, t.id ASC");
+  } else {
+    items = await all(env, baseQuery + " WHERE t.date >= ? AND t.date < ? ORDER BY t.date ASC, t.id ASC", month + "-01", nextMonth(month));
+  }
+  const esc = /* @__PURE__ */ __name((v) => {
+    const s = v == null ? "" : String(v);
+    return /[";\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }, "esc");
+  const num = /* @__PURE__ */ __name((n) => Number(n || 0).toFixed(2).replace(".", ","), "num");
+  let income = 0;
+  let expense = 0;
+  const lines = ["Дата;Тип;Сумма;Описание;Источник;Кто"];
+  for (const t of items) {
+    const amount = Number(t.amount || 0);
+    if (t.type === "income")
+      income += amount;
+    else
+      expense += amount;
+    lines.push([
+      t.date,
+      t.type === "income" ? "Доход" : "Расход",
+      num(amount),
+      t.description || "",
+      t.source === "auto_shift" ? "Авто (смена)" : "Вручную",
+      t.created_by_name || ""
+    ].map(esc).join(";"));
+  }
+  lines.push("");
+  lines.push(["Итого доходов", "", num(income), "", "", ""].map(esc).join(";"));
+  lines.push(["Итого расходов", "", num(expense), "", "", ""].map(esc).join(";"));
+  lines.push(["Сальдо", "", num(income - expense), "", "", ""].map(esc).join(";"));
+  const csv = "\uFEFF" + lines.join("\r\n");
+  const filename = "finance-" + (month === "all" ? "all" : month) + ".csv";
+  return new Response(csv, {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": 'attachment; filename="' + filename + '"'
+    }
+  });
+}
+__name(exportTransactions, "exportTransactions");
 var routes = [
   ["POST", "/api/login", login],
   ["GET", "/api/users", listUsers],
@@ -792,7 +843,8 @@ var routes = [
   ["GET", "/api/transactions/balance", transactionBalance],
   ["POST", "/api/transactions", createTransaction],
   ["PUT", "/api/transactions/:id", updateTransaction],
-  ["DELETE", "/api/transactions/:id", deleteTransaction]
+  ["DELETE", "/api/transactions/:id", deleteTransaction],
+  ["GET", "/api/transactions/export", exportTransactions]
 ];
 async function handleApi(env, request, url) {
   const { pathname } = url;

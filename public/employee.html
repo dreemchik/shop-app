@@ -374,6 +374,18 @@
         .report-card .label { font-size: 13px; color: #999; margin-bottom: 8px; }
         .report-card .value { font-size: 20px; font-weight: bold; color: #e85d75; }
 
+        .fin-auto { font-size: 11px; color: #8a9099; background: #f0f2f5; padding: 2px 7px; border-radius: 8px; white-space: nowrap; margin-left: 6px; }
+        .fin-income { color: #28a745; font-weight: 600; white-space: nowrap; }
+        .fin-expense { color: #dc3545; font-weight: 600; white-space: nowrap; }
+        .fin-total-row td { font-weight: 700; background: #faf2f4; }
+        html[data-theme="dark"] .fin-auto { background: #262a31; color: #a0a6ad; }
+        html[data-theme="dark"] .fin-total-row td { background: #262a31; }
+        .filter-row { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; flex-wrap: wrap; }
+        .filter-row label { font-size: 14px; color: #666; font-weight: 500; }
+        .filter-row select { max-width: 250px; margin: 0; }
+        .edit { background: #fff; color: #e85d75; border: 2px solid #f0c4cd; border-radius: 10px; padding: 9px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .edit:hover { background: #e85d75; color: #fff; border-color: #e85d75; }
+
         .period-buttons { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
         .period-buttons button {
             padding: 10px 18px; border: 2px solid #f0e0e4; background: white;
@@ -844,6 +856,7 @@
         <div class="menu-item" data-section="sales" onclick="showSection('sales')">💰 Дневные продажи</div>
         <div class="menu-item" data-section="tasks" onclick="showSection('tasks')">✅ Задачи</div>
         <div class="menu-item" data-section="reports" onclick="showSection('reports')">📊 Выручка и отчёты</div>
+        <div class="menu-item" data-section="finance" onclick="showSection('finance')">💵 Финансы</div>
         <div class="menu-item" data-section="docs" onclick="showSection('docs')">📄 Документы</div>
         <div class="theme-switch" id="themeSwitch" onclick="toggleTheme()">🌙 Тёмная тема</div>
     </div>
@@ -1009,6 +1022,63 @@
             <div id="reportProducts"></div>
         </div>
 
+        <!-- ФИНАНСЫ -->
+        <div id="financeSection" class="hidden">
+            <button class="logout" onclick="logout()">Выйти</button>
+            <h1>Финансы</h1>
+            <p style="font-size:13px;color:#888;margin-bottom:15px;">Доходы создаются автоматически при закрытии смены. Расходы и другие записи можно добавить вручную.</p>
+
+            <div class="report-summary">
+                <div class="report-card">
+                    <div class="label">Общий баланс за всё время</div>
+                    <div class="value" id="finAllBalance">0 ₽</div>
+                </div>
+                <div class="report-card">
+                    <div class="label">Всего доходов</div>
+                    <div class="value" id="finAllIncome">0 ₽</div>
+                </div>
+                <div class="report-card">
+                    <div class="label">Всего расходов</div>
+                    <div class="value" id="finAllExpense">0 ₽</div>
+                </div>
+            </div>
+
+            <div class="filter-row" style="flex-wrap:wrap;gap:10px;align-items:center;margin-top:10px;">
+                <label>Месяц:</label>
+                <select id="finMonth" onchange="loadFinance()" style="max-width:220px;"></select>
+                <button class="add-product-btn" style="margin:0;" onclick="openFinanceModal()">➕ Добавить запись</button>
+            </div>
+
+            <h3>Доходы</h3>
+            <table id="finIncomeTable">
+                <thead>
+                    <tr><th>Дата</th><th>Сумма</th><th>Описание</th><th>Кто</th><th>Действия</th></tr>
+                </thead>
+                <tbody></tbody>
+                <tfoot>
+                    <tr class="fin-total-row"><td>Итого доходов за месяц</td><td id="finIncomeTotal">0 ₽</td><td colspan="3"></td></tr>
+                </tfoot>
+            </table>
+
+            <h3 style="margin-top:30px;">Расходы</h3>
+            <table id="finExpenseTable">
+                <thead>
+                    <tr><th>Дата</th><th>Сумма</th><th>Описание</th><th>Кто</th><th>Действия</th></tr>
+                </thead>
+                <tbody></tbody>
+                <tfoot>
+                    <tr class="fin-total-row"><td>Итого расходов за месяц</td><td id="finExpenseTotal">0 ₽</td><td colspan="3"></td></tr>
+                </tfoot>
+            </table>
+
+            <div class="report-summary" style="margin-top:20px;">
+                <div class="report-card">
+                    <div class="label">Сальдо за месяц (доходы − расходы)</div>
+                    <div class="value" id="finBalance">0 ₽</div>
+                </div>
+            </div>
+        </div>
+
         <!-- ДОКУМЕНТЫ -->
         <div id="docsSection" class="hidden">
             <button class="logout" onclick="logout()">Выйти</button>
@@ -1097,6 +1167,29 @@
         </div>
     </div>
 
+    <!-- МОДАЛЬНОЕ ОКНО: ФИНАНСЫ -->
+    <div class="modal-overlay" id="financeModal">
+        <div class="modal">
+            <h3 id="finModalTitle">Добавить запись</h3>
+            <input type="hidden" id="finId">
+            <label>Тип записи:</label>
+            <select id="finType">
+                <option value="expense">Расход</option>
+                <option value="income">Доход</option>
+            </select>
+            <label>Дата:</label>
+            <input type="date" id="finDate">
+            <label>Сумма, ₽:</label>
+            <input type="number" id="finAmount" min="0" step="0.01" placeholder="Например: 1500">
+            <label>Описание (пояснение):</label>
+            <textarea id="finDesc" placeholder="Например: закупка упаковки, материалы, аренда..."></textarea>
+            <div class="modal-buttons">
+                <button class="close-btn2" onclick="closeFinanceModal()">Отмена</button>
+                <button class="sell-btn" onclick="saveFinanceEntry()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const userId = localStorage.getItem('userId');
         const fullName = localStorage.getItem('fullName');
@@ -1160,7 +1253,7 @@
         let myCurrentShift = null;
 
         // === НАВИГАЦИЯ ===
-        const sectionNames = ['profile', 'products', 'sales', 'tasks', 'reports', 'docs'];
+        const sectionNames = ['profile', 'products', 'sales', 'tasks', 'reports', 'finance', 'docs'];
 
         function showSection(section, event, fromHistory) {
             if (!sectionNames.includes(section)) section = 'profile';
@@ -1181,6 +1274,7 @@
             if (section === 'products') loadCategoriesFor('products');
             if (section === 'sales') { checkShift(); }
             if (section === 'reports') { loadReports(); loadShifts(); }
+            if (section === 'finance') loadFinance();
             if (section === 'tasks') loadTasks();
             if (section === 'docs') loadDocuments();
             if (window.innerWidth <= 768 && document.getElementById('sidebar').classList.contains('open')) toggleSidebar();
@@ -1653,6 +1747,141 @@
         }
 
         // === ЗАДАЧИ ===
+        // === ФИНАНСЫ ===
+        let finMonth = null;
+        let finItems = [];
+        const FIN_MONTHS_RU = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+
+        function finFmtMonth(ym) {
+            if (!ym || ym === 'all') return 'Все месяцы';
+            const parts = ym.split('-');
+            return FIN_MONTHS_RU[Number(parts[1]) - 1] + ' ' + parts[0];
+        }
+
+        function finMoney(n) {
+            return Number(n || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+        }
+
+        function finEsc(s) {
+            return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        async function loadFinance() {
+            const select = document.getElementById('finMonth');
+            const cur = new Date().toISOString().slice(0, 7);
+
+            let months = [];
+            try { months = await (await fetch('/api/transactions/months')).json(); } catch (e) { months = []; }
+            if (!Array.isArray(months)) months = [];
+            if (!months.includes(cur)) months.unshift(cur);
+
+            let selected = select.value || finMonth || cur;
+            const signature = months.join(',') + '|all';
+            if (select.dataset.sig !== signature) {
+                select.innerHTML = months.map(m => `<option value="${m}">${finFmtMonth(m)}</option>`).join('') + '<option value="all">Все месяцы</option>';
+                select.dataset.sig = signature;
+            }
+            if (!Array.from(select.options).some(o => o.value === selected)) selected = cur;
+            select.value = selected;
+            finMonth = selected;
+
+            const [data, bal] = await Promise.all([
+                fetch('/api/transactions?month=' + encodeURIComponent(finMonth)).then(r => r.json()),
+                fetch('/api/transactions/balance').then(r => r.json())
+            ]);
+            finItems = data.items || [];
+
+            document.querySelector('#finIncomeTable tbody').innerHTML = renderFinRows(finItems, 'income');
+            document.querySelector('#finExpenseTable tbody').innerHTML = renderFinRows(finItems, 'expense');
+
+            const totals = data.totals || { income: 0, expense: 0, balance: 0 };
+            document.getElementById('finIncomeTotal').textContent = finMoney(totals.income);
+            document.getElementById('finExpenseTotal').textContent = finMoney(totals.expense);
+            document.getElementById('finBalance').textContent = finMoney(totals.balance);
+            document.getElementById('finAllIncome').textContent = finMoney(bal.income);
+            document.getElementById('finAllExpense').textContent = finMoney(bal.expense);
+            document.getElementById('finAllBalance').textContent = finMoney(bal.balance);
+        }
+
+        function renderFinRows(items, type) {
+            const rows = items.filter(t => t.type === type);
+            if (rows.length === 0) {
+                const word = type === 'income' ? 'Доходов' : 'Расходов';
+                return `<tr><td colspan="5" style="color:#999;text-align:center;">${word} за выбранный период нет</td></tr>`;
+            }
+            return rows.map(t => {
+                const isManual = t.source === 'manual';
+                const sign = t.type === 'income' ? '+' : '−';
+                const colorClass = t.type === 'income' ? 'fin-income' : 'fin-expense';
+                const autoBadge = isManual ? '' : '<span class="fin-auto" title="Создано автоматически при закрытии смены">🔒 авто</span>';
+                const who = t.created_by_name || (isManual ? '—' : 'Система');
+                const actions = isManual
+                    ? `<button class="edit" onclick="openFinanceModal(${t.id})">Изменить</button>
+                       <button class="delete" onclick="deleteFinanceEntry(${t.id})">Удалить</button>`
+                    : '<span style="color:#999;font-size:12px;">из смены</span>';
+                return `<tr>
+                    <td>${finEsc(t.date)}</td>
+                    <td class="${colorClass}">${sign}${finMoney(t.amount)}</td>
+                    <td>${finEsc(t.description) || '—'}${autoBadge}</td>
+                    <td>${finEsc(who)}</td>
+                    <td style="white-space:nowrap;">${actions}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function openFinanceModal(id) {
+            const hidden = document.getElementById('finId');
+            if (id) {
+                const t = finItems.find(x => x.id === id);
+                if (!t) return;
+                document.getElementById('finModalTitle').textContent = 'Редактировать запись';
+                hidden.value = t.id;
+                document.getElementById('finType').value = t.type;
+                document.getElementById('finDate').value = t.date;
+                document.getElementById('finAmount').value = t.amount;
+                document.getElementById('finDesc').value = t.description || '';
+            } else {
+                document.getElementById('finModalTitle').textContent = 'Добавить запись';
+                hidden.value = '';
+                document.getElementById('finType').value = 'expense';
+                document.getElementById('finDate').value = new Date().toISOString().slice(0, 10);
+                document.getElementById('finAmount').value = '';
+                document.getElementById('finDesc').value = '';
+            }
+            document.getElementById('financeModal').classList.add('active');
+        }
+
+        function closeFinanceModal() { document.getElementById('financeModal').classList.remove('active'); }
+
+        async function saveFinanceEntry() {
+            const id = document.getElementById('finId').value;
+            const type = document.getElementById('finType').value;
+            const date = document.getElementById('finDate').value;
+            const amount = document.getElementById('finAmount').value;
+            const description = document.getElementById('finDesc').value;
+            if (!amount || Number(amount) <= 0) { alert('Укажите сумму больше нуля'); return; }
+            const payload = { type, date, amount, description, created_by: userId };
+            const res = await fetch(id ? '/api/transactions/' + id : '/api/transactions', {
+                method: id ? 'PUT' : 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.error) { alert(data.error); return; }
+            closeFinanceModal();
+            const select = document.getElementById('finMonth');
+            if (select) select.dataset.sig = '';
+            await loadFinance();
+        }
+
+        async function deleteFinanceEntry(id) {
+            if (!confirm('Удалить запись?')) return;
+            const res = await fetch('/api/transactions/' + id, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.error) { alert(data.error); return; }
+            loadFinance();
+        }
+
         async function loadTasks() {
             const res = await fetch('/api/tasks/user/' + userId);
             const tasks = await res.json();

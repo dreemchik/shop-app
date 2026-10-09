@@ -303,7 +303,7 @@ __name(currentShift, "currentShift");
 async function closeShift(env, request) {
   const { shift_id } = await reqJson(request);
   const shift = await first(env, `
-        SELECT shifts.*, users.full_name FROM shifts
+        SELECT shifts.*, users.full_name, users.tc FROM shifts
         JOIN users ON shifts.seller_id = users.id
         WHERE shifts.id = ?`, shift_id);
   if (!shift)
@@ -322,6 +322,19 @@ async function closeShift(env, request) {
     env,
     "INSERT INTO notifications (message, created_at) VALUES (?, ?)",
     `${shift.full_name} \u0437\u0430\u043A\u0440\u044B\u043B(\u0430) \u0441\u043C\u0435\u043D\u0443. \u0412\u044B\u0440\u0443\u0447\u043A\u0430: ${total.toFixed(2)} \u20BD`,
+    endTime
+  );
+  const shiftDate = (shift.start_time || endTime).slice(0, 10);
+  const shiftTc = shift.tc ? `, ${shift.tc}` : "";
+  await run(
+    env,
+    `INSERT OR IGNORE INTO transactions (date, type, amount, description, source, shift_id, created_by, created_at)
+         VALUES (?, 'income', ?, ?, 'auto_shift', ?, ?, ?)`,
+    shiftDate,
+    total,
+    `\u0421\u043C\u0435\u043D\u0430 ${shift.full_name}${shiftTc}`,
+    shift_id,
+    shift.seller_id,
     endTime
   );
   return json({ success: true, total });
@@ -603,6 +616,131 @@ async function readAll(env) {
   return json({ success: true });
 }
 __name(readAll, "readAll");
+var MONTH_RE = /^\d{4}-\d{2}$/;
+__name(MONTH_RE, "MONTH_RE");
+function currentMonth() {
+  return nowISO().slice(0, 7);
+}
+__name(currentMonth, "currentMonth");
+function nextMonth(month) {
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7));
+  return m === 12 ? y + 1 + "-01-01" : y + "-" + String(m + 1).padStart(2, "0") + "-01";
+}
+__name(nextMonth, "nextMonth");
+function money(n) {
+  return Number(n || 0);
+}
+__name(money, "money");
+async function listTransactions(env, request) {
+  const { searchParams } = new URL(request.url);
+  const requested = searchParams.get("month") || currentMonth();
+  const month = requested === "all" ? "all" : MONTH_RE.test(requested) ? requested : currentMonth();
+  let items;
+  if (month === "all") {
+    items = await all(env, `
+            SELECT t.*, u.full_name as created_by_name
+            FROM transactions t
+            LEFT JOIN users u ON t.created_by = u.id
+            ORDER BY t.date DESC, t.id DESC`);
+  } else {
+    items = await all(env, `
+            SELECT t.*, u.full_name as created_by_name
+            FROM transactions t
+            LEFT JOIN users u ON t.created_by = u.id
+            WHERE t.date >= ? AND t.date < ?
+            ORDER BY t.date DESC, t.id DESC`, month + "-01", nextMonth(month));
+  }
+  const totals = { income: 0, expense: 0, balance: 0 };
+  for (const it of items) {
+    const amount = money(it.amount);
+    if (it.type === "income")
+      totals.income += amount;
+    else
+      totals.expense += amount;
+  }
+  totals.balance = totals.income - totals.expense;
+  return json({ month, items, totals });
+}
+__name(listTransactions, "listTransactions");
+async function transactionMonths(env) {
+  const rows = await all(env, "SELECT DISTINCT substr(date, 1, 7) as m FROM transactions ORDER BY m DESC");
+  const months = rows.map((r) => r.m).filter(Boolean);
+  const cm = currentMonth();
+  if (!months.includes(cm))
+    months.unshift(cm);
+  return json(months);
+}
+__name(transactionMonths, "transactionMonths");
+async function transactionBalance(env) {
+  const row = await first(env, `
+        SELECT
+            COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as income,
+            COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as expense
+        FROM transactions`);
+  const income = money(row.income);
+  const expense = money(row.expense);
+  return json({ income, expense, balance: income - expense });
+}
+__name(transactionBalance, "transactionBalance");
+async function createTransaction(env, request) {
+  const b = await reqJson(request);
+  const type = b.type === "expense" ? "expense" : b.type === "income" ? "income" : null;
+  const amount = money(b.amount);
+  if (!type)
+    return fail("\u041D\u0435\u0432\u0435\u0440\u043D\u044B\u0439 \u0442\u0438\u043F \u0437\u0430\u043F\u0438\u0441\u0438", 400);
+  if (!(amount > 0))
+    return fail("\u0421\u0443\u043C\u043C\u0430 \u0434\u043E\u043B\u0436\u043D\u0430 \u0431\u044B\u0442\u044C \u0431\u043E\u043B\u044C\u0448\u0435 \u043D\u0443\u043B\u044F", 400);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || "") ? b.date : today();
+  await run(
+    env,
+    `INSERT INTO transactions (date, type, amount, description, source, shift_id, created_by, created_at)
+         VALUES (?, ?, ?, ?, 'manual', NULL, ?, ?)`,
+    date,
+    type,
+    amount,
+    (b.description || "").toString(),
+    b.created_by || null,
+    nowISO()
+  );
+  return json({ success: true });
+}
+__name(createTransaction, "createTransaction");
+async function updateTransaction(env, request, params) {
+  const t = await first(env, "SELECT * FROM transactions WHERE id = ?", params.id);
+  if (!t)
+    return fail("\u0417\u0430\u043F\u0438\u0441\u044C \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430", 404);
+  if (t.source !== "manual")
+    return fail("\u0410\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0443\u044E \u0437\u0430\u043F\u0438\u0441\u044C \u043D\u0435\u043B\u044C\u0437\u044F \u0440\u0435\u0434\u0430\u043A\u0442\u0438\u0440\u043E\u0432\u0430\u0442\u044C", 400);
+  const b = await reqJson(request);
+  const type = b.type === "expense" ? "expense" : b.type === "income" ? "income" : t.type;
+  const amount = b.amount === void 0 ? money(t.amount) : money(b.amount);
+  if (!(amount > 0))
+    return fail("\u0421\u0443\u043C\u043C\u0430 \u0434\u043E\u043B\u0436\u043D\u0430 \u0431\u044B\u0442\u044C \u0431\u043E\u043B\u044C\u0448\u0435 \u043D\u0443\u043B\u044F", 400);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(b.date || "") ? b.date : t.date;
+  const description = b.description === void 0 ? t.description : (b.description || "").toString();
+  await run(
+    env,
+    "UPDATE transactions SET date = ?, type = ?, amount = ?, description = ? WHERE id = ?",
+    date,
+    type,
+    amount,
+    description,
+    params.id
+  );
+  return json({ success: true });
+}
+__name(updateTransaction, "updateTransaction");
+async function deleteTransaction(env, _request, params) {
+  const t = await first(env, "SELECT * FROM transactions WHERE id = ?", params.id);
+  if (!t)
+    return fail("\u0417\u0430\u043F\u0438\u0441\u044C \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u0430", 404);
+  if (t.source !== "manual")
+    return fail("\u0410\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0443\u044E \u0437\u0430\u043F\u0438\u0441\u044C \u043D\u0435\u043B\u044C\u0437\u044F \u0443\u0434\u0430\u043B\u0438\u0442\u044C", 400);
+  await run(env, "DELETE FROM transactions WHERE id = ?", params.id);
+  return json({ success: true });
+}
+__name(deleteTransaction, "deleteTransaction");
 var routes = [
   ["POST", "/api/login", login],
   ["GET", "/api/users", listUsers],
@@ -648,7 +786,13 @@ var routes = [
   ["DELETE", "/api/documents/:id", deleteDocument],
   ["GET", "/api/notifications", listNotifications],
   ["GET", "/api/notifications/unread-count", unreadCount],
-  ["POST", "/api/notifications/read-all", readAll]
+  ["POST", "/api/notifications/read-all", readAll],
+  ["GET", "/api/transactions", listTransactions],
+  ["GET", "/api/transactions/months", transactionMonths],
+  ["GET", "/api/transactions/balance", transactionBalance],
+  ["POST", "/api/transactions", createTransaction],
+  ["PUT", "/api/transactions/:id", updateTransaction],
+  ["DELETE", "/api/transactions/:id", deleteTransaction]
 ];
 async function handleApi(env, request, url) {
   const { pathname } = url;

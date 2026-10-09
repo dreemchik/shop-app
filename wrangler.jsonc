@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "show-app",
+  "main": "src/index.js",
+  "compatibility_date": "2025-10-01",
+  "workers_dev": true,
+  // Статические страницы: login.html, admin.html, employee.html
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "show-app-db",
+      "database_id": "172c2b0d-9244-41c3-adcb-dc4ab4a819d6"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "SHOW_IMAGES",
+      "id": "b582f717ebc04d0491381a6226215e97"
+    }
+  ]
+}

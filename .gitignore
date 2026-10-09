@@ -1,5 +1,5 @@
 node_modules/
-shop.db
-uploads/
+dist/
+.wrangler/
+.dev.vars
 *.log
-.env

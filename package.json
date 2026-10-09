@@ -1,18 +1,15 @@
 {
   "name": "show-app",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Магазин: админка, продажи, смены, отчёты. Cloudflare Worker + D1 + KV",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:export": "wrangler d1 export show-app-db --remote --output backup/d1-backup.sql",
+    "db:local": "wrangler d1 execute show-app-db --local --file backup/d1-backup.sql"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "express": "^5.2.1",
-    "multer": "^2.3.0",
-    "sqlite3": "^6.0.1"
+  "devDependencies": {
+    "wrangler": "^4.148.0"
   }
 }
